@@ -16,7 +16,7 @@ def load_and_layout():
 
     # 元数据合并
     meta = df_sample[['paper_openalex_id', 'title', 'publication_year', 'abstract', 'cited_by_count',
-                      'referenced_ids_openalex']].drop_duplicates(subset=['paper_openalex_id'])
+                      'referenced_ids_openalex', 'author_id_list', 'author_list']].drop_duplicates(subset=['paper_openalex_id'])
     meta['paper_openalex_id'] = meta['paper_openalex_id'].astype(str)
 
     nodes_data = df_umap.set_index('magid')
@@ -71,12 +71,64 @@ def load_and_layout():
 
     nodes_data['x'] = [pos[n][0] for n in nodes_data.index]
     nodes_data['y'] = [pos[n][1] for n in nodes_data.index]
+    
+    # 1.2 解析作者数据
+    author_data = {} 
+    author_collab = {} 
 
-    return nodes_data, all_edges, int(min_yr), int(max_yr)
+    for _, row in meta.iterrows():
+        pid = str(row['paper_openalex_id'])
+        if pid not in nodes_data.index: continue
+        
+        # 假设你的列名是 author_id_list 和 author_list
+        if pd.isna(row['author_id_list']): continue
+        ids = str(row['author_id_list']).split(';')
+        names = str(row['author_list']).split(';')
+        
+        p_x, p_y = nodes_data.at[pid, 'x'], nodes_data.at[pid, 'y']
+        p_year, p_cite = row['publication_year'], row['cited_by_count']
 
+        for i, aid in enumerate(ids):
+            aid = aid.strip()
+            if not aid: continue
+            if aid not in author_data:
+                author_data[aid] = {'name': names[i].strip(), 'years': [], 'xs': [], 'ys': [], 'cites': 0}
+            author_data[aid]['xs'].append(p_x)
+            author_data[aid]['ys'].append(p_y)
+            author_data[aid]['years'].append(p_year)
+            author_data[aid]['cites'] += p_cite
+
+        # 建立协作边
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                pair = tuple(sorted([ids[i].strip(), ids[j].strip()]))
+                if pair[0] and pair[1]:
+                    author_collab[pair] = author_collab.get(pair, 0) + 1
+
+    # 1.3 构建作者节点 DataFrame
+    author_rows = []
+    for aid, info in author_data.items():
+        author_rows.append({
+            'author_id': aid,
+            'name': info['name'],
+            'x': np.mean(info['xs']),  # 作者位置是其论文位置的平均值
+            'y': np.mean(info['ys']),
+            'publication_year': np.min(info['years']), # 首次活跃年份
+            'cited_by_count': info['cites'],
+            'cluster': 0 # 也可以通过 KMeans 重新聚类，此处简写
+        })
+    nodes_author = pd.DataFrame(author_rows).set_index('author_id')
+    # 简单的聚类分配
+    kmeans_a = KMeans(n_clusters=6, random_state=42, n_init=10)
+    nodes_author['cluster'] = kmeans_a.fit_predict(nodes_author[['x', 'y']])
+
+    # 1.4 提取作者边
+    edges_author = [list(p) for p in author_collab.keys() if p[0] in nodes_author.index and p[1] in nodes_author.index]
+
+    return nodes_data, all_edges, nodes_author, edges_author, int(min_yr), int(max_yr)
 
 # 初始化数据
-nodes_df, edges_pool, MIN_Y, MAX_Y = load_and_layout()
+nodes_df, edges_pool, nodes_author, edges_author, MIN_Y, MAX_Y = load_and_layout()
 
 # --- 2. Dash 网页布局 ---
 app = Dash(__name__)
@@ -87,6 +139,19 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
     html.H2("文献引文网络 - 交互式可视化", style={'textAlign': 'center', 'color': '#4A453F', 'marginBottom': '20px'}),
 
     # 控制面板
+    html.Div([
+        html.Label("🌐 视图模式:", style={'fontWeight': 'bold', 'color': '#4A453F'}),
+        dcc.RadioItems(
+            id='view-mode',
+            options=[
+                {'label': ' 论文引文网络', 'value': 'paper'},
+                {'label': ' 作者协作网络', 'value': 'author'}
+            ],
+            value='paper', # 默认显示论文
+            labelStyle={'display': 'inline-block', 'marginRight': '20px', 'marginTop': '5px'}
+        )
+    ], style={'marginBottom': '20px', 'paddingBottom': '15px', 'borderBottom': '1px solid #eee'}),
+    
     html.Div([
         # 第一排：搜索和年份
         html.Div([
@@ -136,15 +201,27 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
 # --- 3. 交互逻辑回调 ---
 @app.callback(
     Output('main-plot', 'figure'),
-    [Input('year-slider', 'value'),
+    [Input('view-mode', 'value'),
+     Input('year-slider', 'value'),
      Input('search-box', 'value'),
      Input('base-size-slider', 'value'),
      Input('scale-factor-slider', 'value')]
 )
-def update_network(years, search_txt, base_size, scale_factor):
+def update_network(view_mode, years, search_txt, base_size, scale_factor):
+    # 0. 数据源切换逻辑 
+    if view_mode == 'paper':
+        df = nodes_df  # 原始论文数据
+        edges_pool_to_use = edges_pool
+        label_col = 'title'
+        # hover_extra = 'abstract'
+    else:
+        df = nodes_author  # 新增的作者数据
+        edges_pool_to_use = edges_author
+        label_col = 'name'
+        # hover_extra = 'name' # 作者没有摘要，重复显示名字或留空
+        
     # 1. 过滤节点
-    filtered_nodes = nodes_df[
-        (nodes_df['publication_year'] >= years[0]) & (nodes_df['publication_year'] <= years[1])].copy()
+    filtered_nodes = df[(df['publication_year'] >= years[0]) & (df['publication_year'] <= years[1])].copy()
     node_ids = set(filtered_nodes.index)
 
     # 2. 动态计算节点大小
@@ -153,7 +230,7 @@ def update_network(years, search_txt, base_size, scale_factor):
     filtered_nodes['node_s'] = base_size + (sqrt_cites / (sqrt_cites.max() + 1)) * scale_factor
 
     # 3. 边捆绑计算
-    current_edges = [(u, v) for u, v in edges_pool if u in node_ids and v in node_ids]
+    current_edges = [(u, v) for u, v in edges_pool_to_use if u in node_ids and v in node_ids]
     edge_x, edge_y = [], []
     if current_edges:
         nodes_for_hb = filtered_nodes[['x', 'y']]
@@ -165,7 +242,7 @@ def update_network(years, search_txt, base_size, scale_factor):
     # 4. 搜索高亮
     marker_line_widths = [0] * len(filtered_nodes)
     if search_txt and len(search_txt) > 1:
-        highlight_idx = filtered_nodes['title'].str.contains(search_txt, case=False, na=False)
+        highlight_idx = filtered_nodes[label_col].str.contains(search_txt, case=False, na=False)
         marker_line_widths = [2.5 if val else 0 for val in highlight_idx]
 
     # 5. 构建图形
@@ -185,8 +262,12 @@ def update_network(years, search_txt, base_size, scale_factor):
     fig.add_trace(go.Scatter(
         x=filtered_nodes['x'], y=filtered_nodes['y'],
         mode='markers',
-        text=filtered_nodes['title'],
-        customdata=np.stack((filtered_nodes['abstract'], filtered_nodes.index), axis=-1),
+        text=filtered_nodes[label_col], # 动态标签
+        # 作者模式下处理 customdata
+        customdata=np.stack((
+            filtered_nodes['abstract'] if view_mode == 'paper' else filtered_nodes['name'], 
+            filtered_nodes.index
+        ), axis=-1),
         marker=dict(
             size=filtered_nodes['node_s'],
             color=[COLOR_PALETTE[c % 8] for c in filtered_nodes['cluster']],
@@ -219,12 +300,15 @@ def handle_click(clickData):
 
     point = clickData['points'][0]
     title = point['text']
-    abstract = point['customdata'][0]
+    info = point['customdata'][0]
 
+    is_author_mode = (title == info)
+    label = "个人简介/姓名: " if is_author_mode else "摘要: "
+    display_text = info if not is_author_mode else f"选定作者：{info}"
     panel_content = html.Div([
         html.H3(title, style={'color': '#4A453F', 'fontSize': '16px', 'borderBottom': '1px solid #ccc',
                               'paddingBottom': '10px'}),
-        html.P([html.Strong("摘要: "), abstract],
+        html.P([html.Strong(label), display_text],
                style={'fontSize': '13px', 'lineHeight': '1.5', 'textAlign': 'justify'}),
         html.Hr(),
         html.Em("提示: 点击图表空白区域可关闭此面板", style={'fontSize': '11px', 'color': '#999'})
