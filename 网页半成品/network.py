@@ -111,6 +111,7 @@ def load_and_layout():
         author_rows.append({
             'author_id': aid,
             'name': info['name'],
+            'note': f"Author: {info['name']}", 
             'x': np.mean(info['xs']),  # 作者位置是其论文位置的平均值
             'y': np.mean(info['ys']),
             'publication_year': np.min(info['years']), # 首次活跃年份
@@ -265,7 +266,7 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor):
         text=filtered_nodes[label_col], # 动态标签
         # 作者模式下处理 customdata
         customdata=np.stack((
-            filtered_nodes['abstract'] if view_mode == 'paper' else filtered_nodes['name'], 
+            filtered_nodes['abstract'] if view_mode == 'paper' else filtered_nodes['note'], 
             filtered_nodes.index
         ), axis=-1),
         marker=dict(
