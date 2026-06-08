@@ -133,6 +133,7 @@ nodes_df, edges_pool, nodes_author, edges_author, MIN_Y, MAX_Y = load_and_layout
 
 # --- 2. Dash 网页布局 ---
 app = Dash(__name__)
+server = app.server
 
 COLOR_PALETTE = ['#8B7E6F', '#B4C4D5', '#9E9E7E', '#A58B84', '#7E8B9E', '#D6DADB', '#4A453F', '#C2B49B']
 
