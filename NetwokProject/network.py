@@ -3,8 +3,9 @@ import numpy as np
 import networkx as nx
 from sklearn.cluster import KMeans
 import plotly.graph_objects as go
-from dash import Dash, dcc, html, Input, Output, State
+from dash import Dash, dcc, html, Input, Output, State, ctx
 from datashader.bundling import hammer_bundle
+import llm_helper
 
 
 # --- 1. 数据预处理（计算固定坐标） ---
@@ -132,7 +133,7 @@ def load_and_layout():
 nodes_df, edges_pool, nodes_author, edges_author, MIN_Y, MAX_Y = load_and_layout()
 
 # --- 2. Dash 网页布局 ---
-app = Dash(__name__)
+app = Dash(__name__, suppress_callback_exceptions=True)
 server = app.server
 
 COLOR_PALETTE = ['#8B7E6F', '#B4C4D5', '#9E9E7E', '#A58B84', '#7E8B9E', '#D6DADB', '#4A453F', '#C2B49B']
@@ -180,7 +181,7 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
                 html.Label("🚀 引用缩放增量 (Scaling Factor):", style={'fontWeight': 'bold'}),
                 dcc.Slider(id='scale-factor-slider', min=0, max=100, step=5, value=35,
                            tooltip={"placement": "bottom", "always_visible": True})
-            ], style={'width': '48%', 'display': 'inline-block', 'float': 'right'})
+            ], style={'width': '48%', 'display': 'inline-block', 'float': '-'})
         ])
     ], style={'background': 'white', 'padding': '20px', 'borderRadius': '10px',
               'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginBottom': '20px'}),
@@ -189,13 +190,63 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
     html.Div([
         dcc.Graph(id='main-plot', config={'displayModeBar': False},
                   style={'height': '80vh', 'width': '80vh', 'margin': '0 auto'}),
-        # 信息详情面板
+        
+        # 📌 【完好保留】你原本的信息详情面板（通过原有回调控制显示/隐藏）
         html.Div(id='info-panel', style={
-            'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '320px',
+            'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '340px',
             'backgroundColor': 'rgba(255, 255, 255, 0.95)', 'padding': '20px',
             'borderRadius': '8px', 'boxShadow': '0 4px 20px rgba(0,0,0,0.15)',
-            'display': 'none', 'maxHeight': '80%', 'overflowY': 'auto', 'border': '1px solid #8B7E6F', 'zIndex': '1000'
-        })
+            'display': 'none', 'maxHeight': '40%', 'overflowY': 'auto', 'border': '1px solid #8B7E6F', 'zIndex': '1000',
+            'textAlign': 'left'
+        }),
+
+        # 📌 【全新常驻】AI 科研助手面板（放在信息面板下方，top 改为 400px 错开位置）
+        html.Div(id='ai-panel', style={
+            'position': 'absolute', 'top': '400px', 'left': '20px', 'width': '340px',
+            'backgroundColor': 'rgba(255, 255, 255, 0.98)', 'padding': '20px',
+            'borderRadius': '12px', 'boxShadow': '0 8px 30px rgba(0,0,0,0.2)',
+            'display': 'block', 'maxHeight': '45%', 'overflowY': 'auto', 
+            'border': '1px solid #8B7E6F', 'zIndex': '1000', 'textAlign': 'left'
+        }, children=[
+            html.H3("🤖 AI 知识检索与对比", style={'color': '#4A453F', 'marginBottom': '15px', 'marginTop': '0', 'fontSize': '16px'}),
+            
+            # 选中的节点展示区
+            html.Div([
+                html.Strong("已选对比对象 (最多2个):", style={'fontSize': '12px'}),
+                html.Div(id='selected-nodes-tags', style={'marginTop': '5px', 'marginBottom': '10px'})
+            ]),
+            
+            # 清空选择按钮
+            html.Button("🧹 清空选择", id='clear-selection-btn', n_clicks=0, 
+                        style={'padding': '3px 8px', 'marginBottom': '12px', 'backgroundColor': '#D6DADB', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'fontSize': '11px'}),
+            
+            # 对话输入区
+            dcc.Textarea(
+                id='ai-input',
+                placeholder='输入问题...（若选了2个对象，可直接点智能对比）',
+                style={'width': '93%', 'height': '50px', 'borderRadius': '4px', 'borderColor': '#ccc', 'padding': '6px', 'fontFamily': 'inherit', 'fontSize': '12px'}
+            ),
+            
+            html.Div([
+                html.Button("🚀 提问", id='ask-ai-btn', n_clicks=0, 
+                            style={'padding': '6px 12px', 'backgroundColor': '#8B7E6F', 'color': 'white', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'marginRight': '10px', 'fontSize': '12px'}),
+                html.Button("⚖️ 智能对比", id='compare-ai-btn', n_clicks=0, 
+                            style={'padding': '6px 12px', 'backgroundColor': '#7E8B9E', 'color': 'white', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'fontSize': '12px'}),
+            ], style={'marginTop': '8px'}),
+            
+            # AI 回答展示区
+            dcc.Loading(
+                type="circle",
+                children=html.Div(id='ai-output', style={
+                    'marginTop': '15px', 'padding': '10px', 'backgroundColor': '#F9F8F3', 
+                    'borderRadius': '6px', 'borderLeft': '4px solid #8B7E6F', 'fontSize': '12px', 
+                    'lineHeight': '1.6', 'whiteSpace': 'pre-line', 'textAlign': 'justify'
+                }, children="在图表中点击节点，即可将其加入 AI 对比队列。")
+            ),
+            
+            # 隐藏的存储组件
+            dcc.Store(id='selected-nodes-store', data=[]) 
+        ])
     ], style={'position': 'relative', 'textAlign': 'center'})
 ])
 
@@ -325,6 +376,38 @@ def handle_click(clickData):
     }
     return panel_content, panel_style
 
+# 5. 大模型回调部分
+@app.callback(
+    Output('ai-output', 'children'),
+    [Input('ask-ai-btn', 'n_clicks'),
+     Input('compare-ai-btn', 'n_clicks')],
+    [State('selected-nodes-store', 'data'),
+     State('ai-input', 'value')]
+)
+def handle_ai_query(ask_clicks, compare_clicks, selected_nodes, user_question):
+    
+    # 直接使用 ctx.triggered 即可，因为我们已经从 dash 导入了 ctx
+    if not ctx.triggered:
+        return "暂无交互数据，请在左侧图表中点击选择论文或作者。"
+    
+    # 获取是谁触发了回调
+    trigger_id = ctx.triggered_id  # 💡 顺便升级为更新、更稳定的 .triggered_id 写法
+    
+    if not selected_nodes:
+        return "❌ 请先在左侧图表中点击选择至少一篇论文或一位作者！"
+
+    # 1. 处理一键智能对比
+    if trigger_id == 'compare-ai-btn':
+        if len(selected_nodes) < 2:
+            return "❌ 对比模式需要选择 2 个对象（两篇论文或两位作者）。请点击图表选择第二个对象后再试。"
+        
+        return llm_helper.handle_ai_compare(selected_nodes[0], selected_nodes[1])
+
+    # 2. 处理自由提问
+    elif trigger_id == 'ask-ai-btn':
+        return llm_helper.handle_ai_question(selected_nodes, user_question)
+        
+    return "等待指令..."
 
 if __name__ == '__main__':
     app.run(debug=True)
