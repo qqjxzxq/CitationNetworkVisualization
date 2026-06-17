@@ -26,7 +26,7 @@ def load_and_layout():
     })
 
     # 1.1 节点基础布局计算 (固定坐标部分)
-    N_CLUSTERS =6
+    N_CLUSTERS = 6
     WEIGHT_CLUSTER, WEIGHT_CITATION, ITERATIONS = 0.7, 0.3, 60
 
     raw_thetas = np.arctan2(nodes_data['ys'], nodes_data['xs'])
@@ -81,7 +81,6 @@ def load_and_layout():
         pid = str(row['paper_openalex_id'])
         if pid not in nodes_data.index: continue
         
-        # 假设你的列名是 author_id_list 和 author_list
         if pd.isna(row['author_id_list']): continue
         ids = str(row['author_id_list']).split(';')
         names = str(row['author_list']).split(';')
@@ -113,14 +112,14 @@ def load_and_layout():
             'author_id': aid,
             'name': info['name'],
             'note': f"Author: {info['name']}", 
-            'x': np.mean(info['xs']),  # 作者位置是其论文位置的平均值
+            'x': np.mean(info['xs']),  
             'y': np.mean(info['ys']),
-            'publication_year': np.min(info['years']), # 首次活跃年份
+            'publication_year': np.min(info['years']), 
             'cited_by_count': info['cites'],
-            'cluster': 0 # 也可以通过 KMeans 重新聚类，此处简写
+            'cluster': 0 
         })
     nodes_author = pd.DataFrame(author_rows).set_index('author_id')
-    # 简单的聚类分配
+    
     kmeans_a = KMeans(n_clusters=6, random_state=42, n_init=10)
     nodes_author['cluster'] = kmeans_a.fit_predict(nodes_author[['x', 'y']])
 
@@ -128,6 +127,7 @@ def load_and_layout():
     edges_author = [list(p) for p in author_collab.keys() if p[0] in nodes_author.index and p[1] in nodes_author.index]
 
     return nodes_data, all_edges, nodes_author, edges_author, int(min_yr), int(max_yr)
+
 
 # 初始化数据
 nodes_df, edges_pool, nodes_author, edges_author, MIN_Y, MAX_Y = load_and_layout()
@@ -150,7 +150,7 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
                 {'label': ' 论文引文网络', 'value': 'paper'},
                 {'label': ' 作者协作网络', 'value': 'author'}
             ],
-            value='paper', # 默认显示论文
+            value='paper', 
             labelStyle={'display': 'inline-block', 'marginRight': '20px', 'marginTop': '5px'}
         )
     ], style={'marginBottom': '20px', 'paddingBottom': '15px', 'borderBottom': '1px solid #eee'}),
@@ -181,31 +181,19 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
                 html.Label("🚀 引用缩放增量 (Scaling Factor):", style={'fontWeight': 'bold'}),
                 dcc.Slider(id='scale-factor-slider', min=0, max=100, step=5, value=35,
                            tooltip={"placement": "bottom", "always_visible": True})
-            ], style={'width': '48%', 'display': 'inline-block', 'float': '-'})
+            ], style={'width': '48%', 'display': 'inline-block'})
         ])
     ], style={'background': 'white', 'padding': '20px', 'borderRadius': '10px',
               'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginBottom': '20px'}),
 
     # 主绘图区
     html.Div([
-        dcc.Graph(id='main-plot', config={'displayModeBar': False},
-                  style={'height': '80vh', 'width': '80vh', 'margin': '0 auto'}),
-        
-        # 📌 【完好保留】你原本的信息详情面板（通过原有回调控制显示/隐藏）
-        html.Div(id='info-panel', style={
-            'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '340px',
-            'backgroundColor': 'rgba(255, 255, 255, 0.95)', 'padding': '20px',
-            'borderRadius': '8px', 'boxShadow': '0 4px 20px rgba(0,0,0,0.15)',
-            'display': 'none', 'maxHeight': '40%', 'overflowY': 'auto', 'border': '1px solid #8B7E6F', 'zIndex': '1000',
-            'textAlign': 'left'
-        }),
-
-        # 📌 【全新常驻】AI 科研助手面板（放在信息面板下方，top 改为 400px 错开位置）
+        # 📌 1. 【完美居左常驻】 AI 科研助手面板
         html.Div(id='ai-panel', style={
-            'position': 'absolute', 'top': '400px', 'left': '20px', 'width': '340px',
+            'position': 'absolute', 'top': '20px', 'left': '20px', 'width': '340px',
             'backgroundColor': 'rgba(255, 255, 255, 0.98)', 'padding': '20px',
-            'borderRadius': '12px', 'boxShadow': '0 8px 30px rgba(0,0,0,0.2)',
-            'display': 'block', 'maxHeight': '45%', 'overflowY': 'auto', 
+            'borderRadius': '12px', 'boxShadow': '0 8px 30px rgba(0,0,0,0.15)',
+            'display': 'block', 'maxHeight': '82vh', 'overflowY': 'auto', 
             'border': '1px solid #8B7E6F', 'zIndex': '1000', 'textAlign': 'left'
         }, children=[
             html.H3("🤖 AI 知识检索与对比", style={'color': '#4A453F', 'marginBottom': '15px', 'marginTop': '0', 'fontSize': '16px'}),
@@ -224,7 +212,7 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
             dcc.Textarea(
                 id='ai-input',
                 placeholder='输入问题...（若选了2个对象，可直接点智能对比）',
-                style={'width': '93%', 'height': '50px', 'borderRadius': '4px', 'borderColor': '#ccc', 'padding': '6px', 'fontFamily': 'inherit', 'fontSize': '12px'}
+                style={'width': '93%', 'height': '60px', 'borderRadius': '4px', 'borderColor': '#ccc', 'padding': '6px', 'fontFamily': 'inherit', 'fontSize': '12px'}
             ),
             
             html.Div([
@@ -246,7 +234,20 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
             
             # 隐藏的存储组件
             dcc.Store(id='selected-nodes-store', data=[]) 
-        ])
+        ]),
+
+        # 📌 2. 【居中图表】
+        dcc.Graph(id='main-plot', config={'displayModeBar': False},
+                  style={'height': '80vh', 'width': '80vh', 'margin': '0 auto'}),
+        
+        # 📌 3. 【完好保留】你右侧原本的信息详情面板
+        html.Div(id='info-panel', style={
+            'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '340px',
+            'backgroundColor': 'rgba(255, 255, 255, 0.95)', 'padding': '20px',
+            'borderRadius': '8px', 'boxShadow': '0 4px 20px rgba(0,0,0,0.15)',
+            'display': 'none', 'maxHeight': '80vh', 'overflowY': 'auto', 'border': '1px solid #8B7E6F', 'zIndex': '1000',
+            'textAlign': 'left'
+        })
     ], style={'position': 'relative', 'textAlign': 'center'})
 ])
 
@@ -261,17 +262,14 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
      Input('scale-factor-slider', 'value')]
 )
 def update_network(view_mode, years, search_txt, base_size, scale_factor):
-    # 0. 数据源切换逻辑 
     if view_mode == 'paper':
-        df = nodes_df  # 原始论文数据
+        df = nodes_df  
         edges_pool_to_use = edges_pool
         label_col = 'title'
-        # hover_extra = 'abstract'
     else:
-        df = nodes_author  # 新增的作者数据
+        df = nodes_author  
         edges_pool_to_use = edges_author
         label_col = 'name'
-        # hover_extra = 'name' # 作者没有摘要，重复显示名字或留空
         
     # 1. 过滤节点
     filtered_nodes = df[(df['publication_year'] >= years[0]) & (df['publication_year'] <= years[1])].copy()
@@ -279,7 +277,6 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor):
 
     # 2. 动态计算节点大小
     sqrt_cites = np.sqrt(filtered_nodes['cited_by_count'])
-    # 计算公式应用前端传来的 base_size 和 scale_factor
     filtered_nodes['node_s'] = base_size + (sqrt_cites / (sqrt_cites.max() + 1)) * scale_factor
 
     # 3. 边捆绑计算
@@ -315,8 +312,7 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor):
     fig.add_trace(go.Scatter(
         x=filtered_nodes['x'], y=filtered_nodes['y'],
         mode='markers',
-        text=filtered_nodes[label_col], # 动态标签
-        # 作者模式下处理 customdata
+        text=filtered_nodes[label_col], 
         customdata=np.stack((
             filtered_nodes['abstract'] if view_mode == 'paper' else filtered_nodes['note'], 
             filtered_nodes.index
@@ -376,6 +372,70 @@ def handle_click(clickData):
     }
     return panel_content, panel_style
 
+
+@app.callback(
+    [Output('selected-nodes-store', 'data'),
+     Output('selected-nodes-tags', 'children')],
+    [Input('main-plot', 'clickData'),
+     Input('clear-selection-btn', 'n_clicks')],
+    [State('selected-nodes-store', 'data'),
+     State('view-mode', 'value')]
+)
+def manage_selected_nodes(clickData, clear_clicks, current_selected, view_mode):
+    if current_selected is None:
+        current_selected = []
+
+    if ctx.triggered_id == 'clear-selection-btn':
+        return [], html.Span("💡 点击图表节点加入对比", style={'color': '#999', 'fontSize': '12px'})
+
+    if ctx.triggered_id != 'main-plot' or not clickData:
+        if not current_selected:
+            return [], html.Span("💡 点击图表节点加入对比", style={'color': '#999', 'fontSize': '12px'})
+        
+        tags = []
+        for n in current_selected:
+            icon = "📄" if n.get('type') == 'paper' else "👤"
+            color = '#B4C4D5' if n.get('type') == 'paper' else '#C2B49B'
+            tags.append(html.Span(f"{icon} {n['name'][:10]}...", title=n['name'],
+                                  style={'display': 'inline-block', 'margin': '2px', 'padding': '4px 8px', 'backgroundColor': color, 'borderRadius': '4px', 'fontSize': '12px', 'color': '#4A453F'}))
+        return current_selected, tags
+
+    try:
+        point = clickData['points'][0]
+        node_name = point.get('text', 'Unknown')
+        
+        custom_data_list = point.get('customdata', [None, None])
+        node_info = custom_data_list[0]
+        node_id = str(custom_data_list[1])  
+
+        node_meta = {
+            'id': node_id,
+            'name': node_name,
+            'type': view_mode,  
+            'info': node_info if node_info else "无相关摘要信息"
+        }
+
+        if any(str(n['id']) == node_id for n in current_selected):
+            new_selected = current_selected  
+        else:
+            new_selected = current_selected + [node_meta]
+            if len(new_selected) > 2:
+                new_selected = new_selected[1:]  
+
+        tags = []
+        for n in new_selected:
+            icon = "📄" if n['type'] == 'paper' else "👤"
+            color = '#B4C4D5' if n['type'] == 'paper' else '#C2B49B' 
+            tags.append(html.Span(f"{icon} {n['name'][:10]}...", title=n['name'],
+                                  style={'display': 'inline-block', 'margin': '2px', 'padding': '4px 8px', 'backgroundColor': color, 'borderRadius': '4px', 'fontSize': '12px', 'color': '#4A453F', 'fontWeight': 'bold'}))
+        
+        return new_selected, tags
+
+    except Exception as e:
+        print(f"解析节点时发生小意外: {str(e)}")
+        return current_selected, []
+
+
 # 5. 大模型回调部分
 @app.callback(
     Output('ai-output', 'children'),
@@ -385,29 +445,25 @@ def handle_click(clickData):
      State('ai-input', 'value')]
 )
 def handle_ai_query(ask_clicks, compare_clicks, selected_nodes, user_question):
-    
-    # 直接使用 ctx.triggered 即可，因为我们已经从 dash 导入了 ctx
     if not ctx.triggered:
         return "暂无交互数据，请在左侧图表中点击选择论文或作者。"
     
-    # 获取是谁触发了回调
-    trigger_id = ctx.triggered_id  # 💡 顺便升级为更新、更稳定的 .triggered_id 写法
+    trigger_id = ctx.triggered_id  
     
     if not selected_nodes:
         return "❌ 请先在左侧图表中点击选择至少一篇论文或一位作者！"
 
-    # 1. 处理一键智能对比
     if trigger_id == 'compare-ai-btn':
         if len(selected_nodes) < 2:
             return "❌ 对比模式需要选择 2 个对象（两篇论文或两位作者）。请点击图表选择第二个对象后再试。"
         
         return llm_helper.handle_ai_compare(selected_nodes[0], selected_nodes[1])
 
-    # 2. 处理自由提问
     elif trigger_id == 'ask-ai-btn':
         return llm_helper.handle_ai_question(selected_nodes, user_question)
         
     return "等待指令..."
+
 
 if __name__ == '__main__':
     app.run(debug=True)
