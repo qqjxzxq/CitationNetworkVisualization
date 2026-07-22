@@ -17,7 +17,7 @@ def load_and_layout():
 
     # 元数据合并
     meta = df_sample[['paper_openalex_id', 'title', 'publication_year', 'abstract', 'cited_by_count',
-                      'referenced_ids_openalex', 'author_id_list', 'author_list']].drop_duplicates(subset=['paper_openalex_id'])
+                      'referenced_ids_openalex', 'author_id_list', 'author_list','concepts']].drop_duplicates(subset=['paper_openalex_id'])
     meta['paper_openalex_id'] = meta['paper_openalex_id'].astype(str)
 
     nodes_data = df_umap.set_index('magid')
@@ -153,6 +153,16 @@ def load_and_layout():
 
     return nodes_data, all_edges, nodes_author, edges_author, int(min_yr), int(max_yr)
 
+from collections import Counter
+
+# 从 Word_cloud.py 移植的关键词频次统计逻辑
+def get_concepts_frequencies(series):
+    all_concepts = []
+    for item in series.dropna():
+        all_concepts.extend([x.strip() for x in str(item).split(';') if x.strip()])
+    return Counter(all_concepts)
+
+
 
 # 初始化数据
 nodes_df, edges_pool, nodes_author, edges_author, MIN_Y, MAX_Y = load_and_layout()
@@ -265,6 +275,16 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
         dcc.Graph(id='main-plot', config={'displayModeBar': False},
                   style={'height': '80vh', 'width': '80vh', 'margin': '0 auto'}),
         
+        # 📌 3. 【新功能】动态学术关键词词云区
+        html.Div([
+            html.H3("🔤 当前时段学术关键词演化 (Concepts)", 
+                    style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '10px', 'textAlign': 'center'}),
+            dcc.Graph(id='wordcloud-plot', config={'displayModeBar': False}, style={'height': '350px'})
+        ], style={
+            'background': 'white', 'padding': '15px', 'borderRadius': '10px',
+            'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
+        }),
+              
         # 📌 3. 【完好保留】你右侧原本的信息详情面板
         html.Div(id='info-panel', style={
             'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '340px',
@@ -517,6 +537,67 @@ def handle_ai_query(ask_clicks, compare_clicks, selected_nodes, user_question):
         return llm_helper.handle_ai_question(selected_nodes, user_question)
         
     return "等待指令..."
+
+
+# --- 6. 动态词云回调逻辑 ---
+@app.callback(
+    Output('wordcloud-plot', 'figure'),
+    [Input('year-slider', 'value'),
+     Input('view-mode', 'value')]
+)
+def update_wordcloud(years, view_mode):
+    # 1. 过滤当前年份范围内的节点数据
+    # 注：如果不区分论文/作者，均基于当前论文节点筛选
+    df_filtered = nodes_df[(nodes_df['publication_year'] >= years[0]) & (nodes_df['publication_year'] <= years[1])]
+    
+    # 2. 检查是否有 concepts 字段，如果没有则安全退回摘要文本
+    target_series = df_filtered['concepts'] if 'concepts' in df_filtered.columns else df_filtered['title']
+    
+    counts = get_concepts_frequencies(target_series)
+    
+    # 无数据时的空状态提示
+    if not counts:
+        fig = go.Figure()
+        fig.add_annotation(text="该年份范围内无相关 Concepts 数据", showarrow=False, font=dict(size=14, color='#4A453F'))
+        fig.update_layout(paper_bgcolor='#F2F0E4', plot_bgcolor='#F2F0E4',
+                          xaxis=dict(visible=False), yaxis=dict(visible=False))
+        return fig
+
+    # 3. 取前 30 个最高频的关键词进行词云排版
+    top_concepts = counts.most_common(30)
+    words, freqs = zip(*top_concepts)
+
+    # 4. 模拟词云的二维散点布局 (固定随机种子确保滑动年份时布局不跳变)
+    np.random.seed(42)
+    x_pos = np.random.uniform(-1, 1, len(words))
+    y_pos = np.random.uniform(-1, 1, len(words))
+
+    # 根据词频映射字体大小 (12px ~ 32px)
+    max_f, min_f = max(freqs), min(freqs)
+    font_sizes = [12 + 20 * (f - min_f) / (max_f - min_f + 1e-5) for f in freqs]
+
+    # 5. 构建 Plotly 交互式散点词云
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x_pos, y=y_pos,
+        mode='text',
+        text=words,
+        hoverinfo='text',
+        hovertext=[f"<b>{w}</b><br>出现频次: {f} 次" for w, f in zip(words, freqs)],
+        textfont=dict(
+            size=font_sizes,
+            color=[COLOR_PALETTE[i % len(COLOR_PALETTE)] for i in range(len(words))]
+        )
+    ))
+
+    fig.update_layout(
+        showlegend=False,
+        margin=dict(t=10, b=10, l=10, r=10),
+        paper_bgcolor='white', plot_bgcolor='white',
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.2, 1.2], fixedrange=True),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.2, 1.2], fixedrange=True)
+    )
+    return fig
 
 
 if __name__ == '__main__':
