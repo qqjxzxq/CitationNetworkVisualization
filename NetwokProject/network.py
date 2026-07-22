@@ -73,7 +73,7 @@ def load_and_layout():
     nodes_data['x'] = [pos[n][0] for n in nodes_data.index]
     nodes_data['y'] = [pos[n][1] for n in nodes_data.index]
     
-    # 1.2 解析作者数据
+    # 1.2 解析作者数据（增强版：注入作品集与合作纽带）
     author_data = {} 
     author_collab = {} 
 
@@ -87,31 +87,59 @@ def load_and_layout():
         
         p_x, p_y = nodes_data.at[pid, 'x'], nodes_data.at[pid, 'y']
         p_year, p_cite = row['publication_year'], row['cited_by_count']
+        p_title = row['title']
 
         for i, aid in enumerate(ids):
             aid = aid.strip()
             if not aid: continue
             if aid not in author_data:
-                author_data[aid] = {'name': names[i].strip(), 'years': [], 'xs': [], 'ys': [], 'cites': 0}
+                # 新增 papers_built 记录作品，co_authors_set 记录合作者ID
+                author_data[aid] = {
+                    'name': names[i].strip(), 'years': [], 'xs': [], 'ys': [], 
+                    'cites': 0, 'papers_built': [], 'co_authors_set': set()
+                }
             author_data[aid]['xs'].append(p_x)
             author_data[aid]['ys'].append(p_y)
             author_data[aid]['years'].append(p_year)
             author_data[aid]['cites'] += p_cite
+            
+            # 记录代表作（附带引用量，方便后续排前三名）
+            if p_title and p_title != 'Unknown':
+                author_data[aid]['papers_built'].append({'title': p_title, 'cite': p_cite})
 
-        # 建立协作边
+        # 建立协作边并双向记录合作关系
         for i in range(len(ids)):
             for j in range(i + 1, len(ids)):
-                pair = tuple(sorted([ids[i].strip(), ids[j].strip()]))
-                if pair[0] and pair[1]:
+                aid1, aid2 = ids[i].strip(), ids[j].strip()
+                if aid1 and aid2:
+                    pair = tuple(sorted([aid1, aid2]))
                     author_collab[pair] = author_collab.get(pair, 0) + 1
+                    
+                    # 互相灌注学术朋友圈
+                    if aid1 in author_data: author_data[aid1]['co_authors_set'].add(aid2)
+                    if aid2 in author_data: author_data[aid2]['co_authors_set'].add(aid1)
 
     # 1.3 构建作者节点 DataFrame
     author_rows = []
     for aid, info in author_data.items():
+        # 挑选引用量最高的 3 篇代表作
+        top_papers = sorted(info['papers_built'], key=lambda x: x['cite'], reverse=True)[:3]
+        papers_str = "；".join([f"《{p['title']}》(引:{int(p['cite'])})" for p in top_papers]) if top_papers else "暂无记录"
+        
+        # 翻译合作者 ID 为具体姓名
+        co_names = [author_data[ca_id]['name'] for ca_id in info['co_authors_set'] if ca_id in author_data]
+        co_authors_str = "、".join(co_names[:5]) if co_names else "独立研究为主" # 最多展示前5个
+
+        # 封装进富文本 note
+        rich_note = f"📊 总引用量: {int(info['cites'])} 次\n" \
+                    f"📅 首次活跃: {int(np.min(info['years']))} 年\n" \
+                    f"🤝 核心合作学者: {co_authors_str}\n" \
+                    f"📄 代表作品: {papers_str}"
+
         author_rows.append({
             'author_id': aid,
             'name': info['name'],
-            'note': f"Author: {info['name']}", 
+            'note': rich_note,  # 👈 此时的 note 已经进化为全方位个人档案
             'x': np.mean(info['xs']),  
             'y': np.mean(info['ys']),
             'publication_year': np.min(info['years']), 
@@ -120,9 +148,6 @@ def load_and_layout():
         })
     nodes_author = pd.DataFrame(author_rows).set_index('author_id')
     
-    kmeans_a = KMeans(n_clusters=6, random_state=42, n_init=10)
-    nodes_author['cluster'] = kmeans_a.fit_predict(nodes_author[['x', 'y']])
-
     # 1.4 提取作者边
     edges_author = [list(p) for p in author_collab.keys() if p[0] in nodes_author.index and p[1] in nodes_author.index]
 
@@ -337,41 +362,70 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor):
     return fig
 
 
+# --- 优化点 2：动态切换模糊搜索框的提示占位词 ---
+@app.callback(
+    Output('search-box', 'placeholder'),
+    [Input('view-mode', 'value')]
+)
+def update_search_placeholder(view_mode):
+    if view_mode == 'author':
+        return '输入作者姓名进行过滤...'
+    return '标题关键词、摘要检索...'
+
+
 # 4. 处理点击与取消逻辑
+# --- 优化点 1：根据不同网络深度定制右侧信息面板 ---
 @app.callback(
     [Output('info-panel', 'children'), Output('info-panel', 'style')],
     [Input('main-plot', 'clickData')],
+    [State('view-mode', 'value')], # 引入当前视图状态作为判断基准
     prevent_initial_call=False
 )
-def handle_click(clickData):
+def handle_click(clickData, view_mode):
     if not clickData or 'points' not in clickData or 'customdata' not in clickData['points'][0]:
         return "", {'display': 'none'}
 
     point = clickData['points'][0]
     title = point['text']
-    info = point['customdata'][0]
+    info = point['customdata'][0] # 取出第一步注入的字段
 
-    is_author_mode = (title == info)
-    label = "个人简介/姓名: " if is_author_mode else "摘要: "
-    display_text = info if not is_author_mode else f"选定作者：{info}"
-    panel_content = html.Div([
-        html.H3(title, style={'color': '#4A453F', 'fontSize': '16px', 'borderBottom': '1px solid #ccc',
-                              'paddingBottom': '10px'}),
-        html.P([html.Strong(label), display_text],
-               style={'fontSize': '13px', 'lineHeight': '1.5', 'textAlign': 'justify'}),
-        html.Hr(),
-        html.Em("提示: 点击图表空白区域可关闭此面板", style={'fontSize': '11px', 'color': '#999'})
-    ])
+    # 根据网络类型定制高颜值的面板排版
+    if view_mode == 'author':
+        # 切割我们在第一步拼装的多行作者特征数据
+        lines = info.split('\n')
+        panel_content = html.Div([
+            html.H3(f"👤 {title}", style={'color': '#4A453F', 'fontSize': '18px', 'borderBottom': '2px solid #C2B49B', 'paddingBottom': '10px', 'marginTop':'5px'}),
+            html.Div([
+                html.P(lines[0], style={'margin': '6px 0', 'fontSize': '13px'}),
+                html.P(lines[1], style={'margin': '6px 0', 'fontSize': '13px'}),
+                html.P(lines[2], style={'margin': '6px 0', 'color': '#666', 'fontSize': '13px'}),
+            ], style={'backgroundColor': '#F9F8F3', 'padding': '10px', 'borderRadius': '6px', 'marginBottom': '12px'}),
+            
+            html.Strong("🎓 代表著作 (按引用量降序):", style={'fontSize': '13px', 'color': '#4A453F'}),
+            html.P(lines[3].replace("代表作品: ", ""), style={'fontSize': '12px', 'lineHeight': '1.6', 'color': '#555', 'marginTop': '6px', 'textAlign': 'justify'}),
+            html.Hr(style={'borderColor': '#eee', 'margin': '15px 0'}),
+            html.Em("提示: 点击图表空白处可关闭此面板", style={'fontSize': '11px', 'color': '#999'})
+        ])
+    else:
+        # 论文引文网络视图
+        panel_content = html.Div([
+            html.H3(f"📄 {title}", style={'color': '#4A453F', 'fontSize': '15px', 'borderBottom': '2px solid #B4C4D5', 'paddingBottom': '10px', 'marginTop':'5px'}),
+            html.P([
+                html.Strong("🔍 文献摘要: "), 
+                html.Span(info)
+            ], style={'fontSize': '13px', 'lineHeight': '1.6', 'textAlign': 'justify', 'color': '#4A453F'}),
+            html.Hr(style={'borderColor': '#eee', 'margin': '15px 0'}),
+            html.Em("提示: 点击图表空白处可关闭此面板", style={'fontSize': '11px', 'color': '#999'})
+        ])
 
     panel_style = {
-        'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '320px',
+        'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '340px',
         'backgroundColor': 'rgba(255, 255, 255, 0.98)', 'padding': '20px',
-        'borderRadius': '12px', 'boxShadow': '0 8px 30px rgba(0,0,0,0.2)',
-        'display': 'block', 'maxHeight': '80%', 'overflowY': 'auto',
+        'borderRadius': '12px', 'boxShadow': '0 8px 30px rgba(0,0,0,0.18)',
+        'display': 'block', 'maxHeight': '80vh', 'overflowY': 'auto',
         'border': '1px solid #8B7E6F', 'zIndex': '1000'
     }
     return panel_content, panel_style
-
 
 @app.callback(
     [Output('selected-nodes-store', 'data'),

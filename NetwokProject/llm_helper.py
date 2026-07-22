@@ -1,10 +1,12 @@
 # llm_helper.py
 import os
 import openai
+from dotenv import load_dotenv
+load_dotenv()
 
 # 1. 从系统的环境变量中读取密匙
 api_key = os.environ.get("DEEPSEEK_API_KEY")
-# sk-64291e05835b40e4a2dfde20f440bbf6 这是我申请到的api
+
 # 安全检查
 if not api_key:
     raise ValueError("❌ 未检测到环境变量 'DEEPSEEK_API_KEY'，请先在系统中配置该环境变量！")
