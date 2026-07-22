@@ -601,4 +601,8 @@ def update_wordcloud(years, view_mode):
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    #local
+    # app.run(debug=True)
+    
+    # web
+    app.run(host='0.0.0.0', port=8051, debug=False)
