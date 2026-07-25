@@ -2,98 +2,101 @@
 import os
 import openai
 from dotenv import load_dotenv
+
 load_dotenv()
 
-# 1. 从系统的环境变量中读取密匙
+# 1. Read API key from system environment variable
 api_key = os.environ.get("DEEPSEEK_API_KEY")
 
-# 安全检查
+# Security Check
 if not api_key:
-    raise ValueError("❌ 未检测到环境变量 'DEEPSEEK_API_KEY'，请先在系统中配置该环境变量！")
+    raise ValueError("❌ Environment variable 'DEEPSEEK_API_KEY' not found. Please configure it in your system first!")
 
-# 2. 按照官方教材初始化客户端
+# 2. Initialize the OpenAI client
 client = openai.OpenAI(
     api_key=api_key,
-    base_url="https://api.deepseek.com"  # 对应教材中的 base_url (OpenAI)
+    base_url="https://api.deepseek.com"
 )
 
+
 def _call_llm_api(prompt: str) -> str:
-    """内部私有函数：严格按照官方最新 curl 样例构建请求"""
+    """Internal helper function: Sends request to DeepSeek API."""
     try:
-        # 使用官方最新推荐的 deepseek-v4-pro 模型
-        # 并加入 extra_body 传入官方新增的思考参数 (thinking 和 reasoning_effort)
         response = client.chat.completions.create(
-            model="deepseek-v4-pro",  
+            model="deepseek-v4-pro",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant. 你是一个严谨的学术分析助手，擅长分析论文、研究方向以及作者之间的合作与差异。请用清晰、结构化的中文回答。"},
+                {
+                    "role": "system",
+                    "content": "You are a rigorous academic analysis assistant specializing in evaluating research papers, academic fields, and collaboration or differences among authors. Please respond in clear, well-structured English."
+                },
                 {"role": "user", "content": prompt}
             ],
-            stream=False,  # 对应教材样例
+            stream=False,
             extra_body={
-                "thinking": {"type": "enabled"}, # 开启深度思考模式
-                "reasoning_effort": "high"       # 思考强度设置为高，适合学术对比
+                "thinking": {"type": "enabled"},      # Enable deep thinking mode
+                "reasoning_effort": "high"            # High reasoning effort for academic analysis
             }
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"❌ AI 响应出错: {str(e)}"
+        return f"❌ AI response error: {str(e)}"
 
 
 def handle_ai_compare(node1: dict, node2: dict) -> str:
-    """对外接口：处理两篇论文或两位作者的对比逻辑"""
+    """Public interface: Handles comparative analysis between two papers or two authors."""
     if node1['type'] == 'paper' and node2['type'] == 'paper':
         prompt = f"""
-        请对比以下两篇论文的研究方向、核心方法、潜在关联及差异：
-        
-        论文 1 标题: {node1['name']}
-        论文 1 摘要: {node1['info']}
-        
-        --------------------------------------------------
-        
-        论文 2 标题: {node2['name']}
-        论文 2 摘要: {node2['info']}
-        
-        请从以下三个维度全面深入地对比分析：
-        1. 共同的科学背景/研究痛点是什么？
-        2. 两者采取的技术路线或研究视角有何本质不同？
-        3. 如果将两者的成果进行结合，有哪些潜在的创新研究方向？
-        """
+Please compare the research directions, core methodologies, potential connections, and differences between the following two papers:
+
+Paper 1 Title: {node1['name']}
+Paper 1 Abstract: {node1['info']}
+
+--------------------------------------------------
+
+Paper 2 Title: {node2['name']}
+Paper 2 Abstract: {node2['info']}
+
+Please provide a comprehensive and in-depth comparative analysis along the following three dimensions:
+1. What common scientific background or research pain points do they share?
+2. What are the fundamental differences in their technical approaches or research perspectives?
+3. If the findings of both papers were combined, what potential innovative research directions could emerge?
+"""
     elif node1['type'] == 'author' and node2['type'] == 'author':
         prompt = f"""
-        在学术网络中，以下两位学者具有密切的学术联系（或在同一聚类）：
-        学者 1: {node1['name']}
-        学者 2: {node2['name']}
-        
-        请基于此，合理推导并对比两者的研究方向：
-        1. 分析他们可能共同涉足的学术领域。
-        2. 探讨两位学者在研究风格、关注细分方向上的潜在差异。
-        3. 预测他们如果开展学术跨界合作，可能诞生什么方向的创新成果。
-        """
+In the academic network, the following two scholars have close academic connections (or belong to the same cluster):
+Scholar 1: {node1['name']}
+Scholar 2: {node2['name']}
+
+Based on this, infer and compare their research profiles:
+1. Analyze the academic fields they are likely jointly involved in.
+2. Explore potential differences in their research styles and specific focus areas.
+3. Predict what innovative outcomes might arise if they engage in cross-disciplinary collaboration.
+"""
     else:
-        return "❌ 暂不支持跨类型对比（例如一篇论文与一位作者对比），请选择两篇论文或两位作者。"
-        
+        return "❌ Cross-type comparison is currently not supported (e.g., comparing a paper with an author). Please select either two papers or two authors."
+
     return _call_llm_api(prompt)
 
 
 def handle_ai_question(selected_nodes: list, user_question: str) -> str:
-    """对外接口：处理基于当前选中节点的自由提问"""
+    """Public interface: Handles free-form user questions based on selected nodes."""
     if not user_question or len(user_question.strip()) == 0:
-        return "❌ 请在文本框中输入你想问的具体问题！"
-        
+        return "❌ Please enter a specific question in the text box!"
+
     context = ""
     for i, n in enumerate(selected_nodes):
-        prefix = "📄 论文" if n['type'] == 'paper' else "👤 作者"
-        context += f"{prefix} [{i+1}]: {n['name']}\n上下文/摘要: {n['info']}\n\n"
-        
+        prefix = "📄 Paper" if n['type'] == 'paper' else "👤 Author"
+        context += f"{prefix} [{i+1}]: {n['name']}\nContext/Abstract: {n['info']}\n\n"
+
     prompt = f"""
-    基于以下学术实体的上下文信息，回答用户的问题。
-    
-    【学术上下文】
-    {context}
-    
-    【用户问题】
-    {user_question}
-    
-    请结合给出的上下文，给出详尽、富有学术洞察力的回答。若问题与上下文无关，请在回答开头予以说明。
-    """
+Based on the following context of academic entities, answer the user's question.
+
+【Academic Context】
+{context}
+
+【User Question】
+{user_question}
+
+Please provide a detailed and academically insightful response based on the provided context. If the question is unrelated to the context, please state so at the beginning of your response.
+"""
     return _call_llm_api(prompt)
