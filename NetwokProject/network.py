@@ -632,7 +632,7 @@ clientside_callback(
     [Input('year-slider', 'value')]
 )
 def update_evolution_river(years):
-    return evolution_river.generate_evolution_river(meta_df, nodes_df, year_range=years, color_palette=COLOR_PALETTE)
+    return evolution_river.generate_evolution_river(meta_df, nodes_df, year_range=years)
 
 
 if __name__ == '__main__':
