@@ -5,7 +5,7 @@ import numpy as np
 import networkx as nx
 from sklearn.cluster import KMeans
 import plotly.graph_objects as go
-from dash import Dash, dcc, html, Input, Output, State, ctx, clientside_callback  # 👈 确保导入 clientside_callback
+from dash import Dash, dcc, html, Input, Output, State, ctx, clientside_callback
 from datashader.bundling import hammer_bundle
 import llm_helper
 from wordcloud_module import get_wordcloud_and_bar_assets
@@ -80,7 +80,9 @@ def load_and_layout():
     nodes_data['x'] = [pos[n][0] for n in nodes_data.index]
     nodes_data['y'] = [pos[n][1] for n in nodes_data.index]
 
-    # 1.2 Parse Author Data
+    # =========================================================================
+    # 1.2 Parse Author Data (重构算法：提取作者论文的极坐标角度与年份)
+    # =========================================================================
     author_data = {}
     author_collab = {}
 
@@ -99,19 +101,25 @@ def load_and_layout():
         p_title = row['title']
         p_cluster = nodes_data.at[pid, 'cluster']  
 
+        # 计算论文在当前布局下的角度 theta in [0, 2pi)
+        p_theta = np.arctan2(p_y, p_x) % (2 * np.pi)
+
         for i, aid in enumerate(ids):
             aid = aid.strip()
             if not aid:
                 continue
             if aid not in author_data:
                 author_data[aid] = {
-                    'name': names[i].strip(), 'years': [], 'xs': [], 'ys': [],
-                    'cites': 0, 'papers_built': [], 'co_authors_set': set(),
+                    'name': names[i].strip(), 
+                    'years': [], 
+                    'paper_thetas': [],  # 存储名下每篇论文的角度
+                    'cites': 0, 
+                    'papers_built': [], 
+                    'co_authors_set': set(),
                     'clusters': []  
                 }
-            author_data[aid]['xs'].append(p_x)
-            author_data[aid]['ys'].append(p_y)
             author_data[aid]['years'].append(p_year)
+            author_data[aid]['paper_thetas'].append(p_theta)
             author_data[aid]['cites'] += p_cite
             author_data[aid]['clusters'].append(p_cluster)
 
@@ -130,9 +138,67 @@ def load_and_layout():
                     if aid2 in author_data:
                         author_data[aid2]['co_authors_set'].add(aid1)
 
-    # 1.3 Construct Author DataFrame
+# =========================================================================
+    # 1.3 Construct Author DataFrame (极坐标布局算法: 半径=入行年份, 角度=统一权重控制)
+    # =========================================================================
+    # 极坐标布局超参数配置
+    R_MIN, R_MAX = 0, 1.0  # 半径区间（匹配论文网络的 0.2~1.0 范围）
+    
+
+    # 1. 计算每个作者的纯语义角度 (使用向量弧度均值 Circular Mean 避免跨 0/2pi 跳变)
+    author_semantic_thetas = {}
+    for aid, info in author_data.items():
+        sin_sum = np.sum(np.sin(info['paper_thetas']))
+        cos_sum = np.sum(np.cos(info['paper_thetas']))
+        author_semantic_thetas[aid] = np.arctan2(sin_sum, cos_sum) % (2 * np.pi)
+
+    # 2. 全局最早与最晚首发年份
+    all_first_years = [np.min(info['years']) for info in author_data.values() if info['years']]
+    global_min_first_yr = np.min(all_first_years) if all_first_years else min_yr
+    global_max_first_yr = np.max(all_first_years) if all_first_years else max_yr
+
     author_rows = []
     for aid, info in author_data.items():
+        first_year = np.min(info['years'])  # 入行年份（发表第一篇文章的年份）
+        
+        # --- (A) 计算半径 r: 年份反向映射 (越资深/年份越小，r 越大) ---
+        if global_max_first_yr == global_min_first_yr:
+            r = (R_MIN + R_MAX) / 2
+        else:
+            norm_year = (first_year - global_min_first_yr) / (global_max_first_yr - global_min_first_yr)
+            r = R_MAX - norm_year * (R_MAX - R_MIN)  # 反向线性映射：资深作者在外圈
+
+        # --- (B) 统一参数算法计算角度 final_theta ---
+        s_theta = author_semantic_thetas[aid]  # 作者自身的纯语义角度
+        
+        # 计算合作者集合的平均角度 c_theta (类似 Cluster Angle)
+        valid_co_thetas = [
+            author_semantic_thetas[ca_id] 
+            for ca_id in info['co_authors_set'] 
+            if ca_id in author_semantic_thetas
+        ]
+        if valid_co_thetas:
+            sin_co = np.sum(np.sin(valid_co_thetas))
+            cos_co = np.sum(np.cos(valid_co_thetas))
+            c_theta = np.arctan2(sin_co, cos_co) % (2 * np.pi)
+        else:
+            c_theta = s_theta
+
+        # 第一步：用 WEIGHT_CLUSTER 将作者个人语义向合作网络中心(c_theta)合并
+        diff_cluster = np.arctan2(np.sin(c_theta - s_theta), np.cos(c_theta - s_theta))
+        semantic_base = s_theta + WEIGHT_CLUSTER * diff_cluster
+
+        # 第二步：用 WEIGHT_CITATION 融合全局拓扑关系（此处保持为 semantic_base 的平滑过渡，确保结构一致）
+        # 如果后续需要引入特定引文/动态角度 curr_theta，只需替换下面的 semantic_base 即可
+        curr_theta = semantic_base  
+        diff_citation = np.arctan2(np.sin(curr_theta - semantic_base), np.cos(curr_theta - semantic_base))
+        final_theta = (semantic_base + WEIGHT_CITATION * diff_citation) % (2 * np.pi)
+
+        # --- (C) 极坐标 (r, theta) -> 直角坐标 (x, y) ---
+        final_x = r * np.cos(final_theta)
+        final_y = r * np.sin(final_theta)
+
+        # --- (D) 构建属性数据 ---
         main_cluster = Counter(info['clusters']).most_common(1)[0][0] if info['clusters'] else 0
 
         top_papers = sorted(info['papers_built'], key=lambda x: x['cite'], reverse=True)[:3]
@@ -142,7 +208,7 @@ def load_and_layout():
         co_authors_str = ", ".join(co_names[:5]) if co_names else "Mainly Independent Research"
 
         rich_note = f"📊 Total Citations: {int(info['cites'])}\n" \
-                    f"📅 First Active Year: {int(np.min(info['years']))}\n" \
+                    f"👴 First Active Year (Entry): {int(first_year)}\n" \
                     f"🤝 Key Collaborators: {co_authors_str}\n" \
                     f"📄 Selected Publications: {papers_str}"
 
@@ -150,19 +216,20 @@ def load_and_layout():
             'author_id': aid,
             'name': info['name'],
             'note': rich_note,
-            'x': np.mean(info['xs']),
-            'y': np.mean(info['ys']),
-            'publication_year': np.min(info['years']),
+            'x': final_x,
+            'y': final_y,
+            'publication_year': first_year,  # 此处填入入行年份，兼顾 UI 滑块的过滤逻辑
             'cited_by_count': info['cites'],
             'cluster': main_cluster 
         })
     nodes_author = pd.DataFrame(author_rows).set_index('author_id')
-
-    # 1.4 Extract Author Edges
+    
+    # =========================================================================
+    # 1.4 Extract Author Edges & Return
+    # =========================================================================
     edges_author = [list(p) for p in author_collab.keys() if p[0] in nodes_author.index and p[1] in nodes_author.index]
 
     return nodes_data, all_edges, nodes_author, edges_author, int(min_yr), int(max_yr)
-
 
 # Initialize Data
 nodes_df, edges_pool, nodes_author, edges_author, MIN_Y, MAX_Y = load_and_layout()
@@ -223,7 +290,7 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
 
     # Main Plotting Area
     html.Div([
-        # 📌 1. AI Research Assistant Panel (保持原悬浮窗样式 + 增加可拖拽 Header)
+        # 📌 1. AI Research Assistant Panel
         html.Div(id='ai-panel', style={
             'position': 'absolute', 'top': '20px', 'left': '20px', 'width': '260px',
             'backgroundColor': 'rgba(255, 255, 255, 0.95)', 'padding': '20px',
@@ -231,7 +298,6 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
             'display': 'block', 'maxHeight': '70vh', 'overflowY': 'auto',
             'border': '1px solid #8B7E6F', 'zIndex': '1000', 'textAlign': 'left'
         }, children=[
-            # 💡 给标题区域加上 id='ai-panel-header'，并指定 'cursor': 'move' 手势，作为按住拖拽的手柄
             html.Div(id='ai-panel-header', style={
                 'cursor': 'move', 'userSelect': 'none', 'marginBottom': '15px', 'borderBottom': '1px solid #eee', 'paddingBottom': '5px'
             }, children=[
@@ -281,19 +347,16 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
         dcc.Graph(id='main-plot', config={'displayModeBar': False},
                   style={'height': '80vh', 'width': '80vh', 'margin': '0 auto'}),
 
-        # 📌 3. Dynamic Concepts Wordcloud Section (已修改为左右双栏布局)
+        # 📌 3. Dynamic Concepts Wordcloud Section
         html.Div([
             html.H3("🔤 Academic Concept Evolution",
                     style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
             
-            # 左右分栏容器
             html.Div([
-                # 左侧：词云图片展示区
                 html.Div([
                     html.Img(id='wordcloud-img', style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'})
                 ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'paddingRight': '2%'}),
 
-                # 右侧：Top 10 频次柱状图
                 html.Div([
                     dcc.Graph(id='concept-bar-plot', config={'displayModeBar': False}, style={'height': '350px'})
                 ], style={'width': '50%', 'display': 'inline-block', 'verticalAlign': 'top'})
@@ -556,7 +619,6 @@ def handle_ai_query(ask_clicks, compare_clicks, selected_nodes, user_question):
 
 
 # --- Dynamic Wordcloud Callback ---
-
 @app.callback(
     [Output('wordcloud-img', 'src'),
      Output('concept-bar-plot', 'figure')],
@@ -564,18 +626,12 @@ def handle_ai_query(ask_clicks, compare_clicks, selected_nodes, user_question):
      Input('view-mode', 'value')]
 )
 def update_wordcloud(years, view_mode):
-    # 按年份过滤数据
     df_filtered = nodes_df[(nodes_df['publication_year'] >= years[0]) & (nodes_df['publication_year'] <= years[1])]
-    
-    # 直接调用模块生成 Base64 图片与 Plotly Bar Figure
     img_src, bar_fig = get_wordcloud_and_bar_assets(df_filtered, target_col='concepts')
-    
     return img_src, bar_fig
 
 
-# -------------------------------------------------------------
-# 📌 4. Client-side Drag Callback (实现鼠标移动拖拽的核心)
-# -------------------------------------------------------------
+# Client-side Drag Callback
 clientside_callback(
     """
     function(id) {
@@ -616,8 +672,4 @@ clientside_callback(
 
 
 if __name__ == '__main__':
-    # Local Debug
-    # app.run(debug=True)
-
-    # Web Deployment
     app.run(host='0.0.0.0', port=8051, debug=False)
