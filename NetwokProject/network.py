@@ -9,11 +9,11 @@ from dash import Dash, dcc, html, Input, Output, State, ctx, clientside_callback
 from datashader.bundling import hammer_bundle
 import llm_helper
 from wordcloud_module import get_wordcloud_and_bar_assets
+import evolution_river  
 
 
-# --- 1. Data Preprocessing (Fixed Coordinates Calculation) ---
+# --- 1. Data Preprocessing ---
 def load_and_layout():
-    # Load Data using absolute paths for deployment safety
     current_dir = os.path.dirname(os.path.abspath(__file__))
     sample_path = os.path.join(current_dir, 'sample.csv')
     umap_path = os.path.join(current_dir, 'abstract_umap.csv')
@@ -45,7 +45,6 @@ def load_and_layout():
     min_yr, max_yr = nodes_data['publication_year'].min(), nodes_data['publication_year'].max()
     nodes_data['r'] = 0.2 + 0.8 * (nodes_data['publication_year'] - min_yr) / (max_yr - min_yr + 1e-5)
 
-    # Extract all edges
     all_edges = []
     for _, row in meta.iterrows():
         sid = str(row['paper_openalex_id'])
@@ -55,7 +54,6 @@ def load_and_layout():
                 if sid in nodes_data.index and tid in nodes_data.index:
                     all_edges.append((sid, tid))
 
-    # Iterative coordinate adjustment
     pos = {n: np.array([nodes_data.at[n, 'r'] * np.cos(nodes_data.at[n, 'theta_init']),
                         nodes_data.at[n, 'r'] * np.sin(nodes_data.at[n, 'theta_init'])]) for n in nodes_data.index}
 
@@ -80,9 +78,7 @@ def load_and_layout():
     nodes_data['x'] = [pos[n][0] for n in nodes_data.index]
     nodes_data['y'] = [pos[n][1] for n in nodes_data.index]
 
-    # =========================================================================
-    # 1.2 Parse Author Data (重构算法：提取作者论文的极坐标角度与年份)
-    # =========================================================================
+    # 1.2 Parse Author Data
     author_data = {}
     author_collab = {}
 
@@ -100,8 +96,6 @@ def load_and_layout():
         p_year, p_cite = row['publication_year'], row['cited_by_count']
         p_title = row['title']
         p_cluster = nodes_data.at[pid, 'cluster']  
-
-        # 计算论文在当前布局下的角度 theta in [0, 2pi)
         p_theta = np.arctan2(p_y, p_x) % (2 * np.pi)
 
         for i, aid in enumerate(ids):
@@ -112,7 +106,7 @@ def load_and_layout():
                 author_data[aid] = {
                     'name': names[i].strip(), 
                     'years': [], 
-                    'paper_thetas': [],  # 存储名下每篇论文的角度
+                    'paper_thetas': [],
                     'cites': 0, 
                     'papers_built': [], 
                     'co_authors_set': set(),
@@ -138,45 +132,29 @@ def load_and_layout():
                     if aid2 in author_data:
                         author_data[aid2]['co_authors_set'].add(aid1)
 
-# =========================================================================
-    # 1.3 Construct Author DataFrame (极坐标布局算法: 半径=入行年份, 角度=统一权重控制)
-    # =========================================================================
-    # 极坐标布局超参数配置
-    R_MIN, R_MAX = 0, 1.0  # 半径区间（匹配论文网络的 0.2~1.0 范围）
-    
-
-    # 1. 计算每个作者的纯语义角度 (使用向量弧度均值 Circular Mean 避免跨 0/2pi 跳变)
+    # 1.3 Construct Author DataFrame
+    R_MIN, R_MAX = 0, 1.0  
     author_semantic_thetas = {}
     for aid, info in author_data.items():
         sin_sum = np.sum(np.sin(info['paper_thetas']))
         cos_sum = np.sum(np.cos(info['paper_thetas']))
         author_semantic_thetas[aid] = np.arctan2(sin_sum, cos_sum) % (2 * np.pi)
 
-    # 2. 全局最早与最晚首发年份
     all_first_years = [np.min(info['years']) for info in author_data.values() if info['years']]
     global_min_first_yr = np.min(all_first_years) if all_first_years else min_yr
     global_max_first_yr = np.max(all_first_years) if all_first_years else max_yr
 
     author_rows = []
     for aid, info in author_data.items():
-        first_year = np.min(info['years'])  # 入行年份（发表第一篇文章的年份）
-        
-        # --- (A) 计算半径 r: 年份反向映射 (越资深/年份越小，r 越大) ---
+        first_year = np.min(info['years'])
         if global_max_first_yr == global_min_first_yr:
             r = (R_MIN + R_MAX) / 2
         else:
             norm_year = (first_year - global_min_first_yr) / (global_max_first_yr - global_min_first_yr)
-            r = R_MAX - norm_year * (R_MAX - R_MIN)  # 反向线性映射：资深作者在外圈
+            r = R_MAX - norm_year * (R_MAX - R_MIN)
 
-        # --- (B) 统一参数算法计算角度 final_theta ---
-        s_theta = author_semantic_thetas[aid]  # 作者自身的纯语义角度
-        
-        # 计算合作者集合的平均角度 c_theta (类似 Cluster Angle)
-        valid_co_thetas = [
-            author_semantic_thetas[ca_id] 
-            for ca_id in info['co_authors_set'] 
-            if ca_id in author_semantic_thetas
-        ]
+        s_theta = author_semantic_thetas[aid]
+        valid_co_thetas = [author_semantic_thetas[ca_id] for ca_id in info['co_authors_set'] if ca_id in author_semantic_thetas]
         if valid_co_thetas:
             sin_co = np.sum(np.sin(valid_co_thetas))
             cos_co = np.sum(np.cos(valid_co_thetas))
@@ -184,26 +162,18 @@ def load_and_layout():
         else:
             c_theta = s_theta
 
-        # 第一步：用 WEIGHT_CLUSTER 将作者个人语义向合作网络中心(c_theta)合并
         diff_cluster = np.arctan2(np.sin(c_theta - s_theta), np.cos(c_theta - s_theta))
         semantic_base = s_theta + WEIGHT_CLUSTER * diff_cluster
-
-        # 第二步：用 WEIGHT_CITATION 融合全局拓扑关系（此处保持为 semantic_base 的平滑过渡，确保结构一致）
-        # 如果后续需要引入特定引文/动态角度 curr_theta，只需替换下面的 semantic_base 即可
         curr_theta = semantic_base  
         diff_citation = np.arctan2(np.sin(curr_theta - semantic_base), np.cos(curr_theta - semantic_base))
         final_theta = (semantic_base + WEIGHT_CITATION * diff_citation) % (2 * np.pi)
 
-        # --- (C) 极坐标 (r, theta) -> 直角坐标 (x, y) ---
         final_x = r * np.cos(final_theta)
         final_y = r * np.sin(final_theta)
 
-        # --- (D) 构建属性数据 ---
         main_cluster = Counter(info['clusters']).most_common(1)[0][0] if info['clusters'] else 0
-
         top_papers = sorted(info['papers_built'], key=lambda x: x['cite'], reverse=True)[:3]
         papers_str = " ; ".join([f'"{p["title"]}" (Cites: {int(p["cite"])})' for p in top_papers]) if top_papers else "No records"
-
         co_names = [author_data[ca_id]['name'] for ca_id in info['co_authors_set'] if ca_id in author_data]
         co_authors_str = ", ".join(co_names[:5]) if co_names else "Mainly Independent Research"
 
@@ -213,26 +183,20 @@ def load_and_layout():
                     f"📄 Selected Publications: {papers_str}"
 
         author_rows.append({
-            'author_id': aid,
-            'name': info['name'],
-            'note': rich_note,
-            'x': final_x,
-            'y': final_y,
-            'publication_year': first_year,  # 此处填入入行年份，兼顾 UI 滑块的过滤逻辑
-            'cited_by_count': info['cites'],
-            'cluster': main_cluster 
+            'author_id': aid, 'name': info['name'], 'note': rich_note,
+            'x': final_x, 'y': final_y, 'publication_year': first_year,
+            'cited_by_count': info['cites'], 'cluster': main_cluster 
         })
     nodes_author = pd.DataFrame(author_rows).set_index('author_id')
     
-    # =========================================================================
-    # 1.4 Extract Author Edges & Return
-    # =========================================================================
     edges_author = [list(p) for p in author_collab.keys() if p[0] in nodes_author.index and p[1] in nodes_author.index]
 
-    return nodes_data, all_edges, nodes_author, edges_author, int(min_yr), int(max_yr)
+    
+    return nodes_data, all_edges, nodes_author, edges_author, meta, int(min_yr), int(max_yr)
+
 
 # Initialize Data
-nodes_df, edges_pool, nodes_author, edges_author, MIN_Y, MAX_Y = load_and_layout()
+nodes_df, edges_pool, nodes_author, edges_author, meta_df, MIN_Y, MAX_Y = load_and_layout()
 
 # --- 2. Dash Layout ---
 app = Dash(__name__, suppress_callback_exceptions=True)
@@ -290,7 +254,7 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
 
     # Main Plotting Area
     html.Div([
-        # 📌 1. AI Research Assistant Panel
+        #  1. AI Research Assistant Panel
         html.Div(id='ai-panel', style={
             'position': 'absolute', 'top': '20px', 'left': '20px', 'width': '260px',
             'backgroundColor': 'rgba(255, 255, 255, 0.95)', 'padding': '20px',
@@ -305,17 +269,14 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
                 html.Span(" ⠿", style={'color': '#999', 'fontSize': '14px', 'marginLeft': '5px'})
             ]),
 
-            # Selected Items Container
             html.Div([
                 html.Strong("Selected Objects (Max 2):", style={'fontSize': '12px'}),
                 html.Div(id='selected-nodes-tags', style={'marginTop': '5px', 'marginBottom': '10px'})
             ]),
 
-            # Clear Selection Button
             html.Button("🧹 Clear Selection", id='clear-selection-btn', n_clicks=0,
                         style={'padding': '3px 8px', 'marginBottom': '12px', 'backgroundColor': '#D6DADB', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'fontSize': '11px'}),
 
-            # Dialogue Input Area
             dcc.Textarea(
                 id='ai-input',
                 placeholder='Ask a question... (If 2 objects selected, click Smart Compare directly)',
@@ -329,7 +290,6 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
                             style={'padding': '6px 12px', 'backgroundColor': '#7E8B9E', 'color': 'white', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'fontSize': '12px'}),
             ], style={'marginTop': '8px'}),
 
-            # AI Output Display
             dcc.Loading(
                 type="circle",
                 children=html.Div(id='ai-output', style={
@@ -339,15 +299,14 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
                 }, children="Click nodes in the graph to add them to the AI comparison queue.")
             ),
 
-            # Hidden Store
             dcc.Store(id='selected-nodes-store', data=[])
         ]),
 
-        # 📌 2. Main Graph
+        #  2. Main Graph
         dcc.Graph(id='main-plot', config={'displayModeBar': False},
                   style={'height': '80vh', 'width': '80vh', 'margin': '0 auto'}),
 
-        # 📌 3. Dynamic Concepts Wordcloud Section
+        #  3. Dynamic Concepts Wordcloud Section
         html.Div([
             html.H3("🔤 Academic Concept Evolution",
                     style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
@@ -367,7 +326,17 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
             'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
         }),
 
-        # 📌 4. Right Information Detail Panel
+        html.Div([
+            html.H3("🌊 Domain Knowledge Evolution River",
+                    style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
+            dcc.Graph(id='evolution-river-graph', config={'displayModeBar': False}, style={'height': '450px'})
+        ], style={
+            'background': '#F2F0E4', 
+            'padding': '20px', 'borderRadius': '10px',
+            'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
+        }),
+
+        #  4. Right Information Detail Panel
         html.Div(id='info-panel', style={
             'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '340px',
             'backgroundColor': 'rgba(255, 255, 255, 0.95)', 'padding': '20px',
@@ -398,15 +367,12 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor):
         edges_pool_to_use = edges_author
         label_col = 'name'
 
-    # 1. Filter Nodes
     filtered_nodes = df[(df['publication_year'] >= years[0]) & (df['publication_year'] <= years[1])].copy()
     node_ids = set(filtered_nodes.index)
 
-    # 2. Dynamically Calculate Node Size
     sqrt_cites = np.sqrt(filtered_nodes['cited_by_count'])
     filtered_nodes['node_s'] = base_size + (sqrt_cites / (sqrt_cites.max() + 1)) * scale_factor
 
-    # 3. Edge Bundling Calculation
     current_edges = [(u, v) for u, v in edges_pool_to_use if u in node_ids and v in node_ids]
     edge_x, edge_y = [], []
     if current_edges:
@@ -416,26 +382,21 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor):
         edge_x = hb_paths['x'].tolist()
         edge_y = hb_paths['y'].tolist()
 
-    # 4. Search Highlight
     marker_line_widths = [0] * len(filtered_nodes)
     if search_txt and len(search_txt) > 1:
         highlight_idx = filtered_nodes[label_col].str.contains(search_txt, case=False, na=False)
         marker_line_widths = [2.5 if val else 0 for val in highlight_idx]
 
-    # 5. Build Figure
     fig = go.Figure()
 
-    # Background Concentric Circles
     for y_val in np.linspace(MIN_Y, MAX_Y, 6):
         r_val = 0.2 + 0.8 * (y_val - MIN_Y) / (MAX_Y - MIN_Y + 1e-5)
         fig.add_shape(type="circle", xref="x", yref="y", x0=-r_val, y0=-r_val, x1=r_val, y1=r_val,
                       line=dict(color="#D6DADB", width=1, dash="dot"))
 
-    # Edges
     fig.add_trace(go.Scatter(x=edge_x, y=edge_y, line=dict(width=0.6, color='#4A453F'),
                              hoverinfo='none', mode='lines', opacity=0.2))
 
-    # Nodes
     fig.add_trace(go.Scatter(
         x=filtered_nodes['x'], y=filtered_nodes['y'],
         mode='markers',
@@ -464,7 +425,6 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor):
     return fig
 
 
-# Dynamically update search input placeholder based on mode
 @app.callback(
     Output('search-box', 'placeholder'),
     [Input('view-mode', 'value')]
@@ -475,7 +435,6 @@ def update_search_placeholder(view_mode):
     return 'Search title, abstract keywords...'
 
 
-# Handle Click Events & Information Panel Rendering
 @app.callback(
     [Output('info-panel', 'children'), Output('info-panel', 'style')],
     [Input('main-plot', 'clickData')],
@@ -589,7 +548,6 @@ def manage_selected_nodes(clickData, clear_clicks, current_selected, view_mode):
         return current_selected, []
 
 
-# LLM Query Callback
 @app.callback(
     Output('ai-output', 'children'),
     [Input('ask-ai-btn', 'n_clicks'),
@@ -618,7 +576,6 @@ def handle_ai_query(ask_clicks, compare_clicks, selected_nodes, user_question):
     return "Awaiting command..."
 
 
-# --- Dynamic Wordcloud Callback ---
 @app.callback(
     [Output('wordcloud-img', 'src'),
      Output('concept-bar-plot', 'figure')],
@@ -631,7 +588,6 @@ def update_wordcloud(years, view_mode):
     return img_src, bar_fig
 
 
-# Client-side Drag Callback
 clientside_callback(
     """
     function(id) {
@@ -669,6 +625,14 @@ clientside_callback(
     Output('ai-panel-header', 'title'),
     Input('ai-panel', 'id')
 )
+
+
+@app.callback(
+    Output('evolution-river-graph', 'figure'),
+    [Input('year-slider', 'value')]
+)
+def update_evolution_river(years):
+    return evolution_river.generate_evolution_river(meta_df, nodes_df, year_range=years, color_palette=COLOR_PALETTE)
 
 
 if __name__ == '__main__':
