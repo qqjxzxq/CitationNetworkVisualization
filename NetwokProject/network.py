@@ -10,6 +10,8 @@ from datashader.bundling import hammer_bundle
 import llm_helper
 from wordcloud_module import get_wordcloud_and_bar_assets
 import evolution_river  
+import stacked_trend
+import citation_histogram
 
 
 # --- 1. Data Preprocessing ---
@@ -17,6 +19,9 @@ def load_and_layout():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     sample_path = os.path.join(current_dir, 'sample.csv')
     umap_path = os.path.join(current_dir, 'abstract_umap.csv')
+    
+    global stacked_data_df
+    stacked_data_df = pd.read_csv('data_for_stacked.csv')
 
     df_sample = pd.read_csv(sample_path)
     df_umap = pd.read_csv(umap_path).drop_duplicates(subset=['magid'])
@@ -326,6 +331,7 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
             'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
         }),
 
+        # 4. Domain Knowledge Evolution River
         html.Div([
             html.H3("🌊 Domain Knowledge Evolution River",
                     style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
@@ -336,7 +342,29 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
             'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
         }),
 
-        #  4. Right Information Detail Panel
+        # 5. citation histogram graph
+        html.Div([
+            html.H3("📊 Citation & Publication Metrics Histogram",
+                    style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
+            dcc.Graph(id='citation-histogram-graph', config={'displayModeBar': False}, style={'height': '400px'})
+        ], style={
+            'background': '#F2F0E4', 
+            'padding': '20px', 'borderRadius': '10px',
+            'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
+        }),
+
+        # 6. stacked trend
+        html.Div([
+            html.H3("📈 Multi-Dimensional Categorical Trend (Stacked 100%)",
+                    style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
+            dcc.Graph(id='stacked-trend-graph', config={'displayModeBar': False})
+        ], style={
+            'background': '#F2F0E4', 
+            'padding': '20px', 'borderRadius': '10px',
+            'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
+        }),
+
+        # 7. Right Information Detail Panel
         html.Div(id='info-panel', style={
             'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '340px',
             'backgroundColor': 'rgba(255, 255, 255, 0.95)', 'padding': '20px',
@@ -346,7 +374,6 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
         })
     ], style={'position': 'relative', 'textAlign': 'center'})
 ])
-
 
 # --- 3. Interaction Callback Logic ---
 @app.callback(
@@ -634,6 +661,24 @@ clientside_callback(
 def update_evolution_river(years):
     return evolution_river.generate_evolution_river(meta_df, nodes_df, year_range=years)
 
+
+@app.callback(
+    Output('citation-histogram-graph', 'figure'),
+    [Input('year-slider', 'value'),
+     Input('view-mode', 'value')]
+)
+def update_citation_histogram(years, view_mode):
+    target_df = nodes_df if view_mode == 'paper' else nodes_author
+    return citation_histogram.generate_citation_histogram(target_df, year_range=years)
+
+
+@app.callback(
+    Output('stacked-trend-img', 'src'),
+    [Input('year-slider', 'value')]
+)
+def update_stacked_trend(years):
+    
+    return stacked_trend.generate_stacked_trend_figure(stacked_data_df, year_range=years)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8051, debug=False)
