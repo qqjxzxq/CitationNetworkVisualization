@@ -12,7 +12,7 @@ from wordcloud_module import get_wordcloud_and_bar_assets
 import evolution_river  
 import stacked_trend
 import citation_histogram
-
+import geo_map
 
 # --- 1. Data Preprocessing ---
 def load_and_layout():
@@ -372,7 +372,25 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
             'display': 'none', 'maxHeight': '80vh', 'overflowY': 'auto', 'border': '1px solid #8B7E6F', 'zIndex': '1000',
             'textAlign': 'left'
         })
-    ], style={'position': 'relative', 'textAlign': 'center'})
+    ], style={'position': 'relative', 'textAlign': 'center'}),
+    
+        html.Div([
+            html.H3("🌍 Global Geospatial Distribution", 
+                    style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '10px', 'fontWeight': 'bold'}),
+            
+            # 地图图表容器
+            dcc.Graph(
+                id='geo-distribution-map',
+                config={'displayModeBar': False} # 隐藏右上角默认工具栏，保持精美
+            )
+        ], style={
+            'backgroundColor': '#F2F0E4',
+            'padding': '15px',
+            'borderRadius': '10px',
+            'boxShadow': '0 2px 10px rgba(0,0,0,0.05)',
+            'marginBottom': '20px'
+        })
+        
 ])
 
 # --- 3. Interaction Callback Logic ---
@@ -673,12 +691,36 @@ def update_citation_histogram(years, view_mode):
 
 
 @app.callback(
-    Output('stacked-trend-img', 'src'),
+    Output('stacked-trend-graph', 'figure'),
     [Input('year-slider', 'value')]
 )
 def update_stacked_trend(years):
-    
-    return stacked_trend.generate_stacked_trend_figure(stacked_data_df, year_range=years)
+
+    print("STACKED CALLBACK")
+    print(stacked_data_df.shape)
+    print(stacked_data_df.columns.tolist())
+
+    fig = stacked_trend.generate_stacked_trend_figure(
+        stacked_data_df,
+        year_range=years
+    )
+
+    print("TRACE NUMBER:", len(fig.data))
+
+    return fig
+
+
+@app.callback(
+    Output('geo-distribution-map', 'figure'),
+    [Input('year-slider', 'value')]
+)
+def update_geo_map(years):
+    return geo_map.generate_geo_map_figure(
+        stacked_data_df, 
+        year_range=years, 
+        gps_col='first_affil_city_gps'
+    )
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8051, debug=False)
