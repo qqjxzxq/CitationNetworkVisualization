@@ -105,9 +105,5 @@ def generate_stacked_trend_figure(df, year_range=None):
     fig.update_xaxes(showgrid=False, linecolor='#8B7E6F')
     fig.update_yaxes(showgrid=True, gridcolor='#E0DDD0', range=[0, 100], ticksuffix='%')
     
-    print("columns:", filtered_df.columns.tolist())
-
-    print("traces:",
-        len(fig.data))
     
     return fig

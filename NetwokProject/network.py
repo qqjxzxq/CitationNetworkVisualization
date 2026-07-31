@@ -12,7 +12,7 @@ from wordcloud_module import get_wordcloud_and_bar_assets
 import evolution_river  
 import stacked_trend
 import citation_histogram
-import geo_map
+import geo_map_3d
 
 # --- 1. Data Preprocessing ---
 def load_and_layout():
@@ -375,13 +375,18 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
     ], style={'position': 'relative', 'textAlign': 'center'}),
     
         html.Div([
-            html.H3("🌍 Global Geospatial Distribution", 
+            html.H3("🌍 Global Geospatial 3D Distribution", 
                     style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '10px', 'fontWeight': 'bold'}),
             
-            # 地图图表容器
-            dcc.Graph(
-                id='geo-distribution-map',
-                config={'displayModeBar': False} # 隐藏右上角默认工具栏，保持精美
+            # 使用 iframe 承载 3D 柱状地图
+            html.Iframe(
+                id='geo-3d-map-iframe',
+                style={
+                    'width': '100%', 
+                    'height': '400px', 
+                    'border': 'none', 
+                    'borderRadius': '8px'
+                }
             )
         ], style={
             'backgroundColor': '#F2F0E4',
@@ -696,26 +701,21 @@ def update_citation_histogram(years, view_mode):
 )
 def update_stacked_trend(years):
 
-    print("STACKED CALLBACK")
-    print(stacked_data_df.shape)
-    print(stacked_data_df.columns.tolist())
-
     fig = stacked_trend.generate_stacked_trend_figure(
         stacked_data_df,
         year_range=years
     )
 
-    print("TRACE NUMBER:", len(fig.data))
-
     return fig
 
 
 @app.callback(
-    Output('geo-distribution-map', 'figure'),
+    Output('geo-3d-map-iframe', 'srcDoc'), 
     [Input('year-slider', 'value')]
 )
-def update_geo_map(years):
-    return geo_map.generate_geo_map_figure(
+def update_geo_3d_map(years):
+    
+    return geo_map_3d.generate_3d_column_map_html(
         stacked_data_df, 
         year_range=years, 
         gps_col='first_affil_city_gps'
