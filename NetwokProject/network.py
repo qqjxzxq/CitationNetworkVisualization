@@ -1,4 +1,5 @@
 from collections import Counter
+import json
 import os
 import pandas as pd
 import numpy as np
@@ -137,8 +138,8 @@ def load_and_layout():
                     if aid2 in author_data:
                         author_data[aid2]['co_authors_set'].add(aid1)
 
-    # 1.3 Construct Author DataFrame
-    R_MIN, R_MAX = 0, 1.0  
+    # 1.3 Construct Author DataFrame & Author Edges
+    R_MIN, R_MAX = 0.2, 1.0  # R_MIN改为0.2，避免最老的作者全部挤在原点(0,0)
     author_semantic_thetas = {}
     for aid, info in author_data.items():
         sin_sum = np.sum(np.sin(info['paper_thetas']))
@@ -156,7 +157,7 @@ def load_and_layout():
             r = (R_MIN + R_MAX) / 2
         else:
             norm_year = (first_year - global_min_first_yr) / (global_max_first_yr - global_min_first_yr)
-            r = R_MAX - norm_year * (R_MAX - R_MIN)
+            r = R_MIN + norm_year * (R_MAX - R_MIN)
 
         s_theta = author_semantic_thetas[aid]
         valid_co_thetas = [author_semantic_thetas[ca_id] for ca_id in info['co_authors_set'] if ca_id in author_semantic_thetas]
@@ -177,6 +178,12 @@ def load_and_layout():
         final_y = r * np.sin(final_theta)
 
         main_cluster = Counter(info['clusters']).most_common(1)[0][0] if info['clusters'] else 0
+        
+        cluster_counts = dict(Counter(info['clusters']))
+        cluster_counts = {int(k): int(v) for k, v in cluster_counts.items()}
+        total_papers = len(info['years'])
+        avg_cites = info['cites'] / total_papers if total_papers > 0 else 0
+
         top_papers = sorted(info['papers_built'], key=lambda x: x['cite'], reverse=True)[:3]
         papers_str = " ; ".join([f'"{p["title"]}" (Cites: {int(p["cite"])})' for p in top_papers]) if top_papers else "No records"
         co_names = [author_data[ca_id]['name'] for ca_id in info['co_authors_set'] if ca_id in author_data]
@@ -186,17 +193,27 @@ def load_and_layout():
                     f"👴 First Active Year (Entry): {int(first_year)}\n" \
                     f"🤝 Key Collaborators: {co_authors_str}\n" \
                     f"📄 Selected Publications: {papers_str}"
-
+        
+        formatted_counts = {str(k): v for k, v in cluster_counts.items()}
         author_rows.append({
             'author_id': aid, 'name': info['name'], 'note': rich_note,
             'x': final_x, 'y': final_y, 'publication_year': first_year,
-            'cited_by_count': info['cites'], 'cluster': main_cluster 
+            'cited_by_count': info['cites'], 
+            'avg_cites': avg_cites, 
+            'cluster_counts': json.dumps(formatted_counts),
+            'cluster': main_cluster 
         })
-    nodes_author = pd.DataFrame(author_rows).set_index('author_id')
-    
-    edges_author = [list(p) for p in author_collab.keys() if p[0] in nodes_author.index and p[1] in nodes_author.index]
+        
+    nodes_author = pd.DataFrame(author_rows)
+    if not nodes_author.empty:
+        nodes_author = nodes_author.set_index('author_id')  # 方便以 author_id 为键查询坐标
 
-    
+    # 💡 新增逻辑：根据 1.2 中统计的 author_collab 构建作者间的合作连线数据
+    edges_author = []
+    for (aid1, aid2), weight in author_collab.items():
+        if aid1 in nodes_author.index and aid2 in nodes_author.index:
+            edges_author.append((aid1, aid2, weight))
+
     return nodes_data, all_edges, nodes_author, edges_author, meta, int(min_yr), int(max_yr)
 
 
@@ -247,16 +264,27 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
                 html.Label("🔘 Base Size:", style={'fontWeight': 'bold'}),
                 dcc.Slider(id='base-size-slider', min=1, max=20, step=0.5, value=5,
                            tooltip={"placement": "bottom", "always_visible": True})
-            ], style={'width': '48%', 'display': 'inline-block'}),
+            ], style={'width': '32%', 'display': 'inline-block'}),
             html.Div([
                 html.Label("🚀 Citation Scaling Factor:", style={'fontWeight': 'bold'}),
                 dcc.Slider(id='scale-factor-slider', min=0, max=100, step=5, value=35,
                            tooltip={"placement": "bottom", "always_visible": True})
-            ], style={'width': '48%', 'display': 'inline-block'})
-        ])
-    ], style={'background': 'white', 'padding': '20px', 'borderRadius': '10px',
-              'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginBottom': '20px'}),
-
+            ], style={'width': '32%', 'display': 'inline-block'}),
+            
+            html.Div(id='author-size-container', children=[
+                html.Label("📐 Author Node Size By:", style={'fontWeight': 'bold', 'color': '#4A453F'}),
+                dcc.RadioItems(
+                    id='author-size-metric',
+                    options=[
+                        {'label': ' Total Cites', 'value': 'total'},
+                        {'label': ' Average Cites', 'value': 'avg'}
+                    ],
+                    value='total',
+                    labelStyle={'display': 'inline-block', 'marginRight': '10px'}
+                )
+            ], style={'width': '33%', 'display': 'inline-block', 'verticalAlign': 'top', 'paddingTop': '10px'})
+        ]),
+    ]),
     # Main Plotting Area
     html.Div([
         #  1. AI Research Assistant Panel
@@ -405,9 +433,13 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
      Input('year-slider', 'value'),
      Input('search-box', 'value'),
      Input('base-size-slider', 'value'),
-     Input('scale-factor-slider', 'value')]
+     Input('scale-factor-slider', 'value'),
+     Input('author-size-metric', 'value')] 
 )
-def update_network(view_mode, years, search_txt, base_size, scale_factor):
+
+def update_network(view_mode, years, search_txt, base_size, scale_factor, author_size_metric):
+    
+    # 1. 确定基础数据源
     if view_mode == 'paper':
         df = nodes_df
         edges_pool_to_use = edges_pool
@@ -417,13 +449,52 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor):
         edges_pool_to_use = edges_author
         label_col = 'name'
 
+    # 2. 筛选出当前年份范围内的节点（只保留过滤这一步，避免逻辑重复）
     filtered_nodes = df[(df['publication_year'] >= years[0]) & (df['publication_year'] <= years[1])].copy()
     node_ids = set(filtered_nodes.index)
 
-    sqrt_cites = np.sqrt(filtered_nodes['cited_by_count'])
-    filtered_nodes['node_s'] = base_size + (sqrt_cites / (sqrt_cites.max() + 1)) * scale_factor
+    # 如果筛选后没有任何节点，直接防错处理
+    if filtered_nodes.empty:
+        return go.Figure()
 
-    current_edges = [(u, v) for u, v in edges_pool_to_use if u in node_ids and v in node_ids]
+    # 3. 动态计算节点大小（作者视图可按总引用或平均引用，论文视图按总引用）
+    cites_col = 'cited_by_count'
+    if view_mode == 'author' and author_size_metric == 'avg':
+        cites_col = 'avg_cites'
+
+    sqrt_cites = np.sqrt(filtered_nodes[cites_col].astype(float))
+    max_sqrt = sqrt_cites.max() if sqrt_cites.max() > 0 else 1.0
+    filtered_nodes['node_s'] = base_size + (sqrt_cites / max_sqrt) * scale_factor
+
+    # 4. 确定节点的颜色体系与自定义数据（基于筛选后的 filtered_nodes，保证数据长度匹配！）
+    if view_mode == 'paper':
+        # 论文视图：保持每个节点按所属聚类簇（Cluster）显示不同颜色
+        node_colors = [COLOR_PALETTE[c % 8] for c in filtered_nodes['cluster']]
+        
+        # 组装 customdata，第3项留空
+        custom_data_arr = np.stack((
+            filtered_nodes['abstract'], 
+            filtered_nodes.index, 
+            [''] * len(filtered_nodes)
+        ), axis=-1)
+    else:
+        # 作者视图：统一为单一稳重的颜色（解决颜色无意义、跨领域混淆问题）
+        node_colors = '#A58B84'
+        
+        # 组装 customdata，第3项携带 JSON 格式的主题分布占比
+        custom_data_arr = np.stack((
+            filtered_nodes['note'], 
+            filtered_nodes.index, 
+            filtered_nodes['cluster_counts']
+        ), axis=-1)
+
+    # 5. 计算边 bundling（仅对过滤后的节点连线）
+    current_edges = []
+    for edge in edges_pool_to_use:
+        u, v = edge[0], edge[1]  # 只取前两个作为节点 ID
+        if u in node_ids and v in node_ids:
+            current_edges.append((u, v))
+
     edge_x, edge_y = [], []
     if current_edges:
         nodes_for_hb = filtered_nodes[['x', 'y']]
@@ -432,11 +503,12 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor):
         edge_x = hb_paths['x'].tolist()
         edge_y = hb_paths['y'].tolist()
 
+    # 6. 计算搜索高亮红框
     marker_line_widths = [0] * len(filtered_nodes)
     if search_txt and len(search_txt) > 1:
-        highlight_idx = filtered_nodes[label_col].str.contains(search_txt, case=False, na=False)
-        marker_line_widths = [2.5 if val else 0 for val in highlight_idx]
-
+        highlight_mask = filtered_nodes[label_col].str.contains(search_txt, case=False, na=False)
+        marker_line_widths = [2.5 if is_match else 0 for is_match in highlight_mask]
+        
     fig = go.Figure()
 
     for y_val in np.linspace(MIN_Y, MAX_Y, 6):
@@ -451,13 +523,10 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor):
         x=filtered_nodes['x'], y=filtered_nodes['y'],
         mode='markers',
         text=filtered_nodes[label_col],
-        customdata=np.stack((
-            filtered_nodes['abstract'] if view_mode == 'paper' else filtered_nodes['note'],
-            filtered_nodes.index
-        ), axis=-1),
+        customdata=custom_data_arr,  # 【修复 2】：统一为 custom_data_arr
         marker=dict(
             size=filtered_nodes['node_s'],
-            color=[COLOR_PALETTE[c % 8] for c in filtered_nodes['cluster']],
+            color=node_colors,       # 【修复 3】：统一为 node_colors
             line=dict(width=marker_line_widths, color='red'),
             opacity=0.8
         ),
@@ -473,7 +542,6 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor):
                    scaleanchor="x", scaleratio=1, fixedrange=True)
     )
     return fig
-
 
 @app.callback(
     Output('search-box', 'placeholder'),
@@ -496,31 +564,76 @@ def handle_click(clickData, view_mode):
         return "", {'display': 'none'}
 
     point = clickData['points'][0]
-    title = point['text']
-    info = point['customdata'][0]
+    title = point.get('text', 'Unknown')
+    custom_data = point.get('customdata', [])
+    
+    info = custom_data[0] if len(custom_data) > 0 else ""
+    cluster_counts_str = custom_data[2] if len(custom_data) > 2 else "" # 获取主题分布字符串
 
     if view_mode == 'author':
-        lines = info.split('\n')
+        # 安全按行拆分，防止因行数不够导致的 IndexError 崩溃
+        lines = info.split('\n') if info else []
+        
+        line_0 = lines[0] if len(lines) > 0 else ""
+        line_1 = lines[1] if len(lines) > 1 else ""
+        line_2 = lines[2] if len(lines) > 2 else ""
+        line_3 = lines[3] if len(lines) > 3 else ""
+        
+        # 构建主题分布饼图
+        pie_graph = html.Div()
+        if cluster_counts_str:
+            try:
+                counts = json.loads(cluster_counts_str)
+                labels = [f"Topic {k}" for k in counts.keys()]
+                values = list(counts.values())
+                # 饼图颜色保持与论文相同配色的映射
+                pie_colors = [COLOR_PALETTE[int(k) % 8] for k in counts.keys()]
+                
+                pie_fig = go.Figure(data=[go.Pie(
+                    labels=labels, values=values, hole=0.4,
+                    marker=dict(colors=pie_colors),
+                    textinfo='percent', hoverinfo='label+value'
+                )])
+                pie_fig.update_layout(
+                    margin=dict(t=20, b=0, l=0, r=0), height=180,
+                    showlegend=True,
+                    legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.0),
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                    title=dict(text="Research Topics Ratio", font=dict(size=12))
+                )
+                pie_graph = dcc.Graph(figure=pie_fig, config={'displayModeBar': False})
+            except Exception:
+                pie_graph = html.Div()
+
         panel_content = html.Div([
             html.H3(f"👤 {title}", style={'color': '#4A453F', 'fontSize': '18px', 'borderBottom': '2px solid #C2B49B', 'paddingBottom': '10px', 'marginTop': '5px'}),
+            
+            # 插入动态生成的饼图
+            pie_graph,
+            
             html.Div([
-                html.P(lines[0], style={'margin': '6px 0', 'fontSize': '13px'}),
-                html.P(lines[1], style={'margin': '6px 0', 'fontSize': '13px'}),
-                html.P(lines[2], style={'margin': '6px 0', 'color': '#666', 'fontSize': '13px'}),
+                html.P(line_0, style={'margin': '6px 0', 'fontSize': '13px'}),
+                html.P(line_1, style={'margin': '6px 0', 'fontSize': '13px'}),
+                html.P(line_2, style={'margin': '6px 0', 'color': '#666', 'fontSize': '13px'}),
             ], style={'backgroundColor': '#F9F8F3', 'padding': '10px', 'borderRadius': '6px', 'marginBottom': '12px'}),
 
-            html.Strong("🎓 Selected Works (Ranked by Citations):", style={'fontSize': '13px', 'color': '#4A453F'}),
-            html.P(lines[3].replace("Selected Publications: ", ""), style={'fontSize': '12px', 'lineHeight': '1.6', 'color': '#555', 'marginTop': '6px', 'textAlign': 'justify'}),
+            html.Strong("🎓 Selected Works:", style={'fontSize': '13px', 'color': '#4A453F'}),
+            html.P(line_3.replace("Selected Publications: ", ""), style={'fontSize': '12px', 'lineHeight': '1.6', 'color': '#555', 'marginTop': '6px', 'textAlign': 'justify'}),
             html.Hr(style={'borderColor': '#eee', 'margin': '15px 0'}),
             html.Em("Tip: Click blank area in graph to close this panel.", style={'fontSize': '11px', 'color': '#999'})
         ])
+
     else:
+        # 论文模式（Paper View）的展示逻辑
+        paper_id = custom_data[1] if len(custom_data) > 1 else 'N/A'
+        abstract = info if info else "No abstract available."
+
         panel_content = html.Div([
-            html.H3(f"📄 {title}", style={'color': '#4A453F', 'fontSize': '15px', 'borderBottom': '2px solid #B4C4D5', 'paddingBottom': '10px', 'marginTop': '5px'}),
-            html.P([
-                html.Strong("🔍 Abstract: "),
-                html.Span(info)
-            ], style={'fontSize': '13px', 'lineHeight': '1.6', 'textAlign': 'justify', 'color': '#4A453F'}),
+            html.H3(f"📄 {title}", style={'color': '#4A453F', 'fontSize': '16px', 'borderBottom': '2px solid #C2B49B', 'paddingBottom': '10px', 'marginTop': '5px'}),
+            html.P(f"Paper ID: {paper_id}", style={'margin': '6px 0', 'fontSize': '12px', 'color': '#7F8C8D'}),
+            html.Hr(style={'borderColor': '#eee', 'margin': '10px 0'}),
+            html.Strong("Abstract:", style={'fontSize': '13px', 'color': '#4A453F'}),
+            html.P(abstract, style={'fontSize': '12px', 'lineHeight': '1.6', 'color': '#555', 'marginTop': '6px', 'textAlign': 'justify', 'maxHeight': '250px', 'overflowY': 'auto'}),
             html.Hr(style={'borderColor': '#eee', 'margin': '15px 0'}),
             html.Em("Tip: Click blank area in graph to close this panel.", style={'fontSize': '11px', 'color': '#999'})
         ])
@@ -533,7 +646,6 @@ def handle_click(clickData, view_mode):
         'border': '1px solid #8B7E6F', 'zIndex': '1000'
     }
     return panel_content, panel_style
-
 
 @app.callback(
     [Output('selected-nodes-store', 'data'),
@@ -692,8 +804,7 @@ def update_evolution_river(years):
 )
 def update_citation_histogram(years, view_mode):
     target_df = nodes_df if view_mode == 'paper' else nodes_author
-    return citation_histogram.generate_citation_histogram(target_df, year_range=years)
-
+    return citation_histogram.generate_citation_histogram(nodes_df, year_range=years)
 
 @app.callback(
     Output('stacked-trend-graph', 'figure'),
