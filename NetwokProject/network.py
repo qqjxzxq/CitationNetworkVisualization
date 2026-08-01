@@ -116,12 +116,16 @@ def load_and_layout():
                     'cites': 0, 
                     'papers_built': [], 
                     'co_authors_set': set(),
-                    'clusters': []  
+                    'clusters': [],
+                    'cluster_max_years': {}  
                 }
             author_data[aid]['years'].append(p_year)
             author_data[aid]['paper_thetas'].append(p_theta)
             author_data[aid]['cites'] += p_cite
             author_data[aid]['clusters'].append(p_cluster)
+            
+            prev_max = author_data[aid]['cluster_max_years'].get(p_cluster, -1)
+            author_data[aid]['cluster_max_years'][p_cluster] = max(prev_max, p_year)
 
             if p_title and p_title != 'Unknown':
                 author_data[aid]['papers_built'].append({'title': p_title, 'cite': p_cite})
@@ -177,8 +181,16 @@ def load_and_layout():
         final_x = r * np.cos(final_theta)
         final_y = r * np.sin(final_theta)
 
-        main_cluster = Counter(info['clusters']).most_common(1)[0][0] if info['clusters'] else 0
-        
+        cluster_counts = Counter(info['clusters'])
+        if cluster_counts:
+            sorted_clusters = sorted(
+                cluster_counts.keys(),
+                key=lambda c: (-cluster_counts[c], -info['cluster_max_years'].get(c, 0))
+            )
+            main_cluster = sorted_clusters[0]
+        else:
+            main_cluster = 0    
+            
         cluster_counts = dict(Counter(info['clusters']))
         cluster_counts = {int(k): int(v) for k, v in cluster_counts.items()}
         total_papers = len(info['years'])
@@ -208,7 +220,6 @@ def load_and_layout():
     if not nodes_author.empty:
         nodes_author = nodes_author.set_index('author_id')  # 方便以 author_id 为键查询坐标
 
-    # 💡 新增逻辑：根据 1.2 中统计的 author_collab 构建作者间的合作连线数据
     edges_author = []
     for (aid1, aid2), weight in author_collab.items():
         if aid1 in nodes_author.index and aid2 in nodes_author.index:
@@ -466,22 +477,20 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor, author
     max_sqrt = sqrt_cites.max() if sqrt_cites.max() > 0 else 1.0
     filtered_nodes['node_s'] = base_size + (sqrt_cites / max_sqrt) * scale_factor
 
-    # 4. 确定节点的颜色体系与自定义数据（基于筛选后的 filtered_nodes，保证数据长度匹配！）
+    # 4. 确定节点的颜色体系与自定义数据
     if view_mode == 'paper':
-        # 论文视图：保持每个节点按所属聚类簇（Cluster）显示不同颜色
-        node_colors = [COLOR_PALETTE[c % 8] for c in filtered_nodes['cluster']]
+        # 论文视图：按所属 Cluster 显示颜色
+        node_colors = [COLOR_PALETTE[int(c) % 8] for c in filtered_nodes['cluster']]
         
-        # 组装 customdata，第3项留空
         custom_data_arr = np.stack((
             filtered_nodes['abstract'], 
             filtered_nodes.index, 
             [''] * len(filtered_nodes)
         ), axis=-1)
     else:
-        # 作者视图：统一为单一稳重的颜色（解决颜色无意义、跨领域混淆问题）
-        node_colors = '#A58B84'
+        # 💡 作者视图：根据刚才算出的 dominant_cluster 从 COLOR_PALETTE 获取对应 Topic 的颜色
+        node_colors = [COLOR_PALETTE[int(c) % 8] for c in filtered_nodes['cluster']]
         
-        # 组装 customdata，第3项携带 JSON 格式的主题分布占比
         custom_data_arr = np.stack((
             filtered_nodes['note'], 
             filtered_nodes.index, 
@@ -803,7 +812,6 @@ def update_evolution_river(years):
      Input('view-mode', 'value')]
 )
 def update_citation_histogram(years, view_mode):
-    target_df = nodes_df if view_mode == 'paper' else nodes_author
     return citation_histogram.generate_citation_histogram(nodes_df, year_range=years)
 
 @app.callback(
