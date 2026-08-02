@@ -237,6 +237,7 @@ server = app.server
 
 COLOR_PALETTE = ['#8B7E6F', '#B4C4D5', '#9E9E7E', '#A58B84', '#7E8B9E', '#D6DADB', '#4A453F', '#C2B49B']
 
+# --- app.layout 极简修改版 ---
 app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh', 'padding': '20px'}, children=[
     html.H2("Citation Network - Interactive Visualization", style={'textAlign': 'center', 'color': '#4A453F', 'marginBottom': '20px'}),
 
@@ -272,33 +273,26 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
         # Row 2: Node Size Controls
         html.Div([
             html.Div([
-                html.Label("🔘 Base Size:", style={'fontWeight': 'bold'}),
-                dcc.Slider(id='base-size-slider', min=1, max=20, step=0.5, value=5,
-                           tooltip={"placement": "bottom", "always_visible": True})
-            ], style={'width': '32%', 'display': 'inline-block'}),
-            html.Div([
-                html.Label("🚀 Citation Scaling Factor:", style={'fontWeight': 'bold'}),
-                dcc.Slider(id='scale-factor-slider', min=0, max=100, step=5, value=35,
-                           tooltip={"placement": "bottom", "always_visible": True})
-            ], style={'width': '32%', 'display': 'inline-block'}),
-            
-            html.Div(id='author-size-container', children=[
-                html.Label("📐 Author Node Size By:", style={'fontWeight': 'bold', 'color': '#4A453F'}),
-                dcc.RadioItems(
-                    id='author-size-metric',
-                    options=[
-                        {'label': ' Total Cites', 'value': 'total'},
-                        {'label': ' Average Cites', 'value': 'avg'}
-                    ],
-                    value='total',
-                    labelStyle={'display': 'inline-block', 'marginRight': '10px'}
+                html.Label("🔘 Base Size:", style={'fontWeight': 'bold', 'color': '#4A453F', 'display': 'block', 'marginBottom': '8px'}),
+                dcc.Slider(
+                    id='base-size-slider', min=1, max=20, step=0.5, value=5,
+                    tooltip={"placement": "top", "always_visible": True}
                 )
-            ], style={'width': '33%', 'display': 'inline-block', 'verticalAlign': 'top', 'paddingTop': '10px'})
-        ]),
+            ], style={'width': '48%', 'display': 'inline-block', 'paddingRight': '2%'}),
+            
+            html.Div([
+                html.Label("🚀 Citation Scaling Factor:", style={'fontWeight': 'bold', 'color': '#4A453F', 'display': 'block', 'marginBottom': '8px'}),
+                dcc.Slider(
+                    id='scale-factor-slider', min=0, max=100, step=5, value=35,
+                    tooltip={"placement": "top", "always_visible": True}
+                )
+            ], style={'width': '48%', 'display': 'inline-block', 'paddingLeft': '2%'})
+        ], style={'marginBottom': '35px', 'paddingTop': '10px'})
     ]),
-    # Main Plotting Area
+
+    # 🎯 核心修改 1：独立 Main Graph Container (仅包含主图与 3 个绝对定位悬浮面板)
     html.Div([
-        #  1. AI Research Assistant Panel
+        # 1. AI Research Assistant Panel
         html.Div(id='ai-panel', style={
             'position': 'absolute', 'top': '20px', 'left': '20px', 'width': '260px',
             'backgroundColor': 'rgba(255, 255, 255, 0.95)', 'padding': '20px',
@@ -346,64 +340,57 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
             dcc.Store(id='selected-nodes-store', data=[])
         ]),
 
-        #  2. Main Graph
+        # 2. Main Graph
         dcc.Graph(id='main-plot', config={'displayModeBar': False},
                   style={'height': '80vh', 'width': '80vh', 'margin': '0 auto'}),
 
-        #  3. Dynamic Concepts Wordcloud Section
-        html.Div([
-            html.H3("🔤 Academic Concept Evolution",
-                    style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
-            
-            html.Div([
-                html.Div([
-                    html.Img(id='wordcloud-img', style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'})
-                ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'paddingRight': '2%'}),
+        # 3. Floating Author Node Size Control Overlay
+        html.Div(
+            id='author-size-container',
+            children=[
+                html.Span("NODE SIZE METRIC", style={
+                    'fontSize': '10px',
+                    'fontWeight': '700',
+                    'letterSpacing': '1px',
+                    'color': '#8C8275',
+                    'marginBottom': '6px',
+                    'display': 'block'
+                }),
+                dcc.RadioItems(
+                    id='author-size-metric',
+                    options=[
+                        {'label': ' Total Cites', 'value': 'total'},
+                        {'label': ' Avg Cites', 'value': 'avg'}
+                    ],
+                    value='total',
+                    inputStyle={'marginRight': '4px'},
+                    labelStyle={
+                        'display': 'inline-block',
+                        'marginRight': '10px',
+                        'fontSize': '12px',
+                        'color': '#4A453F',
+                        'fontWeight': '500',
+                        'cursor': 'pointer'
+                    }
+                )
+            ],
+            style={
+                'position': 'absolute',
+                'bottom': '30px',
+                'left': '30px',           
+                'zIndex': '2000',            
+                'backgroundColor': 'rgba(255, 255, 255, 0.92)', 
+                'backdropFilter': 'blur(8px)',                  
+                'padding': '10px 14px',
+                'borderRadius': '8px',
+                'border': '1px solid #8B7E6F',
+                'boxShadow': '0 4px 15px rgba(0, 0, 0, 0.1)',
+                'transition': 'all 0.3s ease',
+                'display': 'none'
+            }
+        ),
 
-                html.Div([
-                    dcc.Graph(id='concept-bar-plot', config={'displayModeBar': False}, style={'height': '350px'})
-                ], style={'width': '50%', 'display': 'inline-block', 'verticalAlign': 'top'})
-            ])
-        ], style={
-            'background': '#F2F0E4', 
-            'padding': '20px', 'borderRadius': '10px',
-            'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
-        }),
-
-        # 4. Domain Knowledge Evolution River
-        html.Div([
-            html.H3("🌊 Domain Knowledge Evolution River",
-                    style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
-            dcc.Graph(id='evolution-river-graph', config={'displayModeBar': False}, style={'height': '450px'})
-        ], style={
-            'background': '#F2F0E4', 
-            'padding': '20px', 'borderRadius': '10px',
-            'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
-        }),
-
-        # 5. citation histogram graph
-        html.Div([
-            html.H3("📊 Citation & Publication Metrics Histogram",
-                    style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
-            dcc.Graph(id='citation-histogram-graph', config={'displayModeBar': False}, style={'height': '400px'})
-        ], style={
-            'background': '#F2F0E4', 
-            'padding': '20px', 'borderRadius': '10px',
-            'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
-        }),
-
-        # 6. stacked trend
-        html.Div([
-            html.H3("📈 Multi-Dimensional Categorical Trend (Stacked 100%)",
-                    style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
-            dcc.Graph(id='stacked-trend-graph', config={'displayModeBar': False})
-        ], style={
-            'background': '#F2F0E4', 
-            'padding': '20px', 'borderRadius': '10px',
-            'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
-        }),
-
-        # 7. Right Information Detail Panel
+        # 4. Right Information Detail Panel
         html.Div(id='info-panel', style={
             'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '340px',
             'backgroundColor': 'rgba(255, 255, 255, 0.95)', 'padding': '20px',
@@ -411,30 +398,84 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
             'display': 'none', 'maxHeight': '80vh', 'overflowY': 'auto', 'border': '1px solid #8B7E6F', 'zIndex': '1000',
             'textAlign': 'left'
         })
-    ], style={'position': 'relative', 'textAlign': 'center'}),
-    
-        html.Div([
-            html.H3("🌍 Global Geospatial 3D Distribution", 
-                    style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '10px', 'fontWeight': 'bold'}),
-            
-            # 使用 iframe 承载 3D 柱状地图
-            html.Iframe(
-                id='geo-3d-map-iframe',
-                style={
-                    'width': '100%', 
-                    'height': '400px', 
-                    'border': 'none', 
-                    'borderRadius': '8px'
-                }
-            )
-        ], style={
-            'backgroundColor': '#F2F0E4',
-            'padding': '15px',
-            'borderRadius': '10px',
-            'boxShadow': '0 2px 10px rgba(0,0,0,0.05)',
-            'marginBottom': '20px'
-        })
+    ], style={'position': 'relative', 'height': '80vh', 'marginBottom': '20px', 'textAlign': 'center'}),
+
+    # 🎯 核心修改 2：把后续模块移到了 Main Graph Container 的外面
+    # Dynamic Concepts Wordcloud Section
+    html.Div([
+        html.H3("🔤 Academic Concept Evolution",
+                style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
         
+        html.Div([
+            html.Div([
+                html.Img(id='wordcloud-img', style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'})
+            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'paddingRight': '2%'}),
+
+            html.Div([
+                dcc.Graph(id='concept-bar-plot', config={'displayModeBar': False}, style={'height': '350px'})
+            ], style={'width': '50%', 'display': 'inline-block', 'verticalAlign': 'top'})
+        ])
+    ], style={
+        'background': '#F2F0E4', 
+        'padding': '20px', 'borderRadius': '10px',
+        'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
+    }),
+
+    # Domain Knowledge Evolution River
+    html.Div([
+        html.H3("🌊 Domain Knowledge Evolution River",
+                style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
+        dcc.Graph(id='evolution-river-graph', config={'displayModeBar': False}, style={'height': '450px'})
+    ], style={
+        'background': '#F2F0E4', 
+        'padding': '20px', 'borderRadius': '10px',
+        'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
+    }),
+
+    # Citation Histogram Graph
+    html.Div([
+        html.H3("📊 Citation & Publication Metrics Histogram",
+                style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
+        dcc.Graph(id='citation-histogram-graph', config={'displayModeBar': False}, style={'height': '400px'})
+    ], style={
+        'background': '#F2F0E4', 
+        'padding': '20px', 'borderRadius': '10px',
+        'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
+    }),
+
+    # Stacked Trend Graph
+    html.Div([
+        html.H3("📈 Multi-Dimensional Categorical Trend (Stacked 100%)",
+                style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
+        dcc.Graph(id='stacked-trend-graph', config={'displayModeBar': False})
+    ], style={
+        'background': '#F2F0E4', 
+        'padding': '20px', 'borderRadius': '10px',
+        'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
+    }),
+    
+    # 3D Map Section
+    html.Div([
+        html.H3("🌍 Global Geospatial 3D Distribution", 
+                style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '10px', 'fontWeight': 'bold'}),
+        
+        html.Iframe(
+            id='geo-3d-map-iframe',
+            style={
+                'width': '100%', 
+                'height': '400px', 
+                'border': 'none', 
+                'borderRadius': '8px'
+            }
+        )
+    ], style={
+        'backgroundColor': '#F2F0E4',
+        'padding': '15px',
+        'borderRadius': '10px',
+        'boxShadow': '0 2px 10px rgba(0,0,0,0.05)',
+        'marginTop': '20px',
+        'marginBottom': '20px'
+    })
 ])
 
 # --- 3. Interaction Callback Logic ---
@@ -546,9 +587,9 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor, author
         showlegend=False, clickmode='event',
         margin=dict(t=0, b=0, l=0, r=0),
         paper_bgcolor='#F2F0E4', plot_bgcolor='#F2F0E4',
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.2, 1.2], fixedrange=True),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.2, 1.2], fixedrange=False),
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.2, 1.2],
-                   scaleanchor="x", scaleratio=1, fixedrange=True)
+                   scaleanchor="x", scaleratio=1, fixedrange=False)
     )
     return fig
 
@@ -839,6 +880,33 @@ def update_geo_3d_map(years):
         year_range=years, 
         gps_col='first_affil_city_gps'
     )
+
+@app.callback(
+    Output('author-size-container', 'style'),
+    Input('view-mode', 'value')
+)
+def toggle_author_size_control(view_mode):
+    # 基础悬浮样式
+    base_style = {
+        'position': 'absolute',
+        'top': '101px',
+        'right': '160px',          
+        'zIndex': '2000',            
+        'backgroundColor': 'rgba(255, 255, 255, 0.92)', 
+        'backdropFilter': 'blur(8px)',                  
+        'padding': '10px 14px',
+        'borderRadius': '8px',
+        'border': '1px solid #8B7E6F',
+        'boxShadow': '0 4px 15px rgba(0, 0, 0, 0.1)',
+        'transition': 'all 0.3s ease'
+    }
+    
+    if view_mode == 'author':
+        base_style['display'] = 'block'   # 🌟 作者模式：显示悬浮面板
+    else:
+        base_style['display'] = 'none'    # 🌟 论文模式：隐藏面板
+        
+    return base_style
 
 
 if __name__ == '__main__':
