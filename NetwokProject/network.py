@@ -143,7 +143,7 @@ def load_and_layout():
                         author_data[aid2]['co_authors_set'].add(aid1)
 
     # 1.3 Construct Author DataFrame & Author Edges
-    R_MIN, R_MAX = 0.2, 1.0  # R_MIN改为0.2，避免最老的作者全部挤在原点(0,0)
+    R_MIN, R_MAX = 0.2, 1.0
     author_semantic_thetas = {}
     for aid, info in author_data.items():
         sin_sum = np.sum(np.sin(info['paper_thetas']))
@@ -218,7 +218,7 @@ def load_and_layout():
         
     nodes_author = pd.DataFrame(author_rows)
     if not nodes_author.empty:
-        nodes_author = nodes_author.set_index('author_id')  # 方便以 author_id 为键查询坐标
+        nodes_author = nodes_author.set_index('author_id')
 
     edges_author = []
     for (aid1, aid2), weight in author_collab.items():
@@ -237,245 +237,203 @@ server = app.server
 
 COLOR_PALETTE = ['#8B7E6F', '#B4C4D5', '#9E9E7E', '#A58B84', '#7E8B9E', '#D6DADB', '#4A453F', '#C2B49B']
 
-# --- app.layout 极简修改版 ---
-app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh', 'padding': '20px'}, children=[
-    html.H2("Citation Network - Interactive Visualization", style={'textAlign': 'center', 'color': '#4A453F', 'marginBottom': '20px'}),
+# CSS Helper Styles
+CARD_STYLE = {
+    'backgroundColor': '#FFFFFF',
+    'borderRadius': '8px',
+    'padding': '12px',
+    'boxShadow': '0 2px 8px rgba(0,0,0,0.06)',
+    'border': '1px solid #E5E0D8',
+    'marginBottom': '12px'
+}
 
-    # Control Panel
-    html.Div([
-        html.Label("🌐 View Mode:", style={'fontWeight': 'bold', 'color': '#4A453F'}),
-        dcc.RadioItems(
-            id='view-mode',
-            options=[
-                {'label': ' Paper Citation Network', 'value': 'paper'},
-                {'label': ' Author Collaboration Network', 'value': 'author'}
-            ],
-            value='paper',
-            labelStyle={'display': 'inline-block', 'marginRight': '20px', 'marginTop': '5px'}
-        )
-    ], style={'marginBottom': '20px', 'paddingBottom': '15px', 'borderBottom': '1px solid #eee'}),
+# App Layout Structure Refactored
+app.layout = html.Div(style={
+    'backgroundColor': '#F5F3EB',
+    'minHeight': '100vh',
+    'padding': '15px',
+    'fontFamily': 'Inter, system-ui, sans-serif',
+    'boxSizing': 'border-box'
+}, children=[
 
-    html.Div([
-        # Row 1: Search & Year Range
-        html.Div([
-            html.Div([
-                html.Label("🔍 Search:", style={'fontWeight': 'bold'}),
-                dcc.Input(id='search-box', type='text', placeholder='Title keywords...',
-                          style={'width': '90%', 'padding': '8px', 'borderRadius': '4px', 'border': '1px solid #ccc'})
-            ], style={'width': '33%', 'display': 'inline-block'}),
-            html.Div([
-                html.Label("📅 Publication Year Range:", style={'fontWeight': 'bold'}),
-                dcc.RangeSlider(id='year-slider', min=MIN_Y, max=MAX_Y, step=1, value=[MIN_Y, MAX_Y],
-                                marks={i: str(i) for i in range(MIN_Y, MAX_Y + 1, 5)})
-            ], style={'width': '66%', 'display': 'inline-block', 'verticalAlign': 'top'})
-        ], style={'marginBottom': '20px'}),
+    # Outer Grid Container
+    html.Div(style={
+        'display': 'grid',
+        'gridTemplateColumns': '280px 1fr 340px',
+        'gridTemplateRows': 'auto 1fr auto',
+        'gap': '12px',
+        'maxWidth': '1800px',
+        'margin': '0 auto'
+    }, children=[
 
-        # Row 2: Node Size Controls
-        html.Div([
-            html.Div([
-                html.Label("🔘 Base Size:", style={'fontWeight': 'bold', 'color': '#4A453F', 'display': 'block', 'marginBottom': '8px'}),
-                dcc.Slider(
-                    id='base-size-slider', min=1, max=20, step=0.5, value=5,
-                    tooltip={"placement": "top", "always_visible": True}
-                )
-            ], style={'width': '48%', 'display': 'inline-block', 'paddingRight': '2%'}),
-            
-            html.Div([
-                html.Label("🚀 Citation Scaling Factor:", style={'fontWeight': 'bold', 'color': '#4A453F', 'display': 'block', 'marginBottom': '8px'}),
-                dcc.Slider(
-                    id='scale-factor-slider', min=0, max=100, step=5, value=35,
-                    tooltip={"placement": "top", "always_visible": True}
-                )
-            ], style={'width': '48%', 'display': 'inline-block', 'paddingLeft': '2%'})
-        ], style={'marginBottom': '35px', 'paddingTop': '10px'})
-    ]),
-
-    # 🎯 核心修改 1：独立 Main Graph Container (仅包含主图与 3 个绝对定位悬浮面板)
-    html.Div([
-        # 1. AI Research Assistant Panel
-        html.Div(id='ai-panel', style={
-            'position': 'absolute', 'top': '20px', 'left': '20px', 'width': '260px',
-            'backgroundColor': 'rgba(255, 255, 255, 0.95)', 'padding': '20px',
-            'borderRadius': '12px', 'boxShadow': '0 8px 30px rgba(0,0,0,0.15)',
-            'display': 'block', 'maxHeight': '70vh', 'overflowY': 'auto',
-            'border': '1px solid #8B7E6F', 'zIndex': '1000', 'textAlign': 'left'
+        # ==========================================
+        # TOP ROW: 2. Control Panel (跨越中间和右边/顶部)
+        # ==========================================
+        html.Div(style={
+            'gridColumn': '1 / -1',
+            'backgroundColor': '#FFFFFF',
+            'borderRadius': '8px',
+            'padding': '10px 18px',
+            'border': '1px solid #E5E0D8',
+            'boxShadow': '0 2px 6px rgba(0,0,0,0.04)',
+            'display': 'flex',
+            'alignItems': 'center',
+            'justifySizing': 'space-between',
+            'gap': '20px'
         }, children=[
-            html.Div(id='ai-panel-header', style={
-                'cursor': 'move', 'userSelect': 'none', 'marginBottom': '15px', 'borderBottom': '1px solid #eee', 'paddingBottom': '5px'
-            }, children=[
-                html.H3("🤖 AI Search & Comparison", style={'color': '#4A453F', 'margin': '0', 'fontSize': '16px', 'display': 'inline-block'}),
-                html.Span(" ⠿", style={'color': '#999', 'fontSize': '14px', 'marginLeft': '5px'})
-            ]),
-
+            # 模式切换
             html.Div([
-                html.Strong("Selected Objects (Max 2):", style={'fontSize': '12px'}),
-                html.Div(id='selected-nodes-tags', style={'marginTop': '5px', 'marginBottom': '10px'})
-            ]),
+                html.Label("View Mode", style={'fontWeight': 'bold', 'color': '#4A453F', 'fontSize': '12px', 'display': 'block', 'marginBottom': '4px'}),
+                dcc.RadioItems(
+                    id='view-mode',
+                    options=[
+                        {'label': ' 引文网络 (Paper)', 'value': 'paper'},
+                        {'label': ' 作者合作网络 (Author)', 'value': 'author'}
+                    ],
+                    value='paper',
+                    labelStyle={'display': 'inline-block', 'marginRight': '12px', 'fontSize': '12px'}
+                )
+            ], style={'flex': '0 0 220px'}),
 
-            html.Button("🧹 Clear Selection", id='clear-selection-btn', n_clicks=0,
-                        style={'padding': '3px 8px', 'marginBottom': '12px', 'backgroundColor': '#D6DADB', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'fontSize': '11px'}),
-
-            dcc.Textarea(
-                id='ai-input',
-                placeholder='Ask a question... (If 2 objects selected, click Smart Compare directly)',
-                style={'width': '93%', 'height': '60px', 'borderRadius': '4px', 'borderColor': '#ccc', 'padding': '6px', 'fontFamily': 'inherit', 'fontSize': '12px'}
-            ),
-
+            # 年份范围
             html.Div([
-                html.Button("🚀 Ask AI", id='ask-ai-btn', n_clicks=0,
-                            style={'padding': '6px 12px', 'backgroundColor': '#8B7E6F', 'color': 'white', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'marginRight': '10px', 'fontSize': '12px'}),
-                html.Button("⚖️ Smart Compare", id='compare-ai-btn', n_clicks=0,
-                            style={'padding': '6px 12px', 'backgroundColor': '#7E8B9E', 'color': 'white', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'fontSize': '12px'}),
-            ], style={'marginTop': '8px'}),
+                html.Label("Publication Year Range", style={'fontWeight': 'bold', 'color': '#4A453F', 'fontSize': '12px'}),
+                dcc.RangeSlider(id='year-slider', min=MIN_Y, max=MAX_Y, step=1, value=[MIN_Y, MAX_Y],
+                                marks={i: str(i) for i in range(MIN_Y, MAX_Y + 1, 3)})
+            ], style={'flex': '1'}),
 
-            dcc.Loading(
-                type="circle",
-                children=html.Div(id='ai-output', style={
-                    'marginTop': '15px', 'padding': '10px', 'backgroundColor': '#F9F8F3',
-                    'borderRadius': '6px', 'borderLeft': '4px solid #8B7E6F', 'fontSize': '12px',
-                    'lineHeight': '1.6', 'whiteSpace': 'pre-line', 'textAlign': 'justify'
-                }, children="Click nodes in the graph to add them to the AI comparison queue.")
-            ),
-
-            dcc.Store(id='selected-nodes-store', data=[])
+            # 节点大小与缩放
+            html.Div([
+                html.Label("Node Size / Citation Scaling", style={'fontWeight': 'bold', 'color': '#4A453F', 'fontSize': '12px'}),
+                html.Div([
+                    dcc.Slider(id='base-size-slider', min=1, max=20, step=0.5, value=5, tooltip={"placement": "bottom"}),
+                    dcc.Slider(id='scale-factor-slider', min=0, max=100, step=5, value=35, tooltip={"placement": "bottom"})
+                ], style={'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '10px'})
+            ], style={'flex': '1'})
         ]),
 
-        # 2. Main Graph
-        dcc.Graph(id='main-plot', config={'displayModeBar': False},
-                  style={'height': '80vh', 'width': '80vh', 'margin': '0 auto'}),
+        # ==========================================
+        # LEFT COLUMN: 1. 模糊搜索功能 & 7. 两个悬浮/信息窗
+        # ==========================================
+        html.Div(style={'display': 'flex', 'flexDirection': 'column', 'gap': '10px'}, children=[
+            
+            # 1. 模糊搜索功能卡片
+            html.Div(style=CARD_STYLE, children=[
+                html.H4("🔍 Search & Filter", style={'margin': '0 0 8px 0', 'fontSize': '14px', 'color': '#4A453F'}),
+                dcc.Input(id='search-box', type='text', placeholder='Search title, abstract keywords...',
+                          style={'width': '100%', 'padding': '8px', 'borderRadius': '4px', 'border': '1px solid #CCC', 'boxSizing': 'border-box'}),
+                html.Div(id='search-results-list', style={'fontSize': '11px', 'color': '#666', 'marginTop': '6px'})
+            ]),
 
-        # 3. Floating Author Node Size Control Overlay
-        html.Div(
-            id='author-size-container',
-            children=[
-                html.Span("NODE SIZE METRIC", style={
-                    'fontSize': '10px',
-                    'fontWeight': '700',
-                    'letterSpacing': '1px',
-                    'color': '#8C8275',
-                    'marginBottom': '6px',
-                    'display': 'block'
-                }),
-                dcc.RadioItems(
-                    id='author-size-metric',
-                    options=[
-                        {'label': ' Total Cites', 'value': 'total'},
-                        {'label': ' Avg Cites', 'value': 'avg'}
-                    ],
-                    value='total',
-                    inputStyle={'marginRight': '4px'},
-                    labelStyle={
-                        'display': 'inline-block',
-                        'marginRight': '10px',
-                        'fontSize': '12px',
-                        'color': '#4A453F',
-                        'fontWeight': '500',
-                        'cursor': 'pointer'
-                    }
-                )
-            ],
-            style={
-                'position': 'absolute',
-                'bottom': '30px',
-                'left': '30px',           
-                'zIndex': '2000',            
-                'backgroundColor': 'rgba(255, 255, 255, 0.92)', 
-                'backdropFilter': 'blur(8px)',                  
-                'padding': '10px 14px',
-                'borderRadius': '8px',
-                'border': '1px solid #8B7E6F',
-                'boxShadow': '0 4px 15px rgba(0, 0, 0, 0.1)',
-                'transition': 'all 0.3s ease',
-                'display': 'none'
-            }
-        ),
+            # 7. AI Search & Comparison 模块
+            html.Div(id='ai-panel', style=CARD_STYLE, children=[
+                html.Div(id='ai-panel-header', style={'marginBottom': '8px', 'paddingBottom': '4px', 'borderBottom': '1px solid #EEE'}, children=[
+                    html.H4("🤖 AI Search & Comparison", style={'color': '#4A453F', 'margin': '0', 'fontSize': '13px', 'display': 'inline-block'}),
+                ]),
 
-        # 4. Right Information Detail Panel
-        html.Div(id='info-panel', style={
-            'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '340px',
-            'backgroundColor': 'rgba(255, 255, 255, 0.95)', 'padding': '20px',
-            'borderRadius': '8px', 'boxShadow': '0 4px 20px rgba(0,0,0,0.15)',
-            'display': 'none', 'maxHeight': '80vh', 'overflowY': 'auto', 'border': '1px solid #8B7E6F', 'zIndex': '1000',
-            'textAlign': 'left'
-        })
-    ], style={'position': 'relative', 'height': '80vh', 'marginBottom': '20px', 'textAlign': 'center'}),
+                html.Div([
+                    html.Span("Selected Objects (Max 2):", style={'fontSize': '11px', 'fontWeight': 'bold'}),
+                    html.Div(id='selected-nodes-tags', style={'marginTop': '4px', 'marginBottom': '8px'})
+                ]),
 
-    # 🎯 核心修改 2：把后续模块移到了 Main Graph Container 的外面
-    # Dynamic Concepts Wordcloud Section
-    html.Div([
-        html.H3("🔤 Academic Concept Evolution",
-                style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
-        
-        html.Div([
-            html.Div([
-                html.Img(id='wordcloud-img', style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'})
-            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'paddingRight': '2%'}),
+                html.Button("🧹 Clear Selection", id='clear-selection-btn', n_clicks=0,
+                            style={'padding': '2px 6px', 'marginBottom': '8px', 'backgroundColor': '#E0DCD3', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'fontSize': '10px'}),
 
-            html.Div([
-                dcc.Graph(id='concept-bar-plot', config={'displayModeBar': False}, style={'height': '350px'})
-            ], style={'width': '50%', 'display': 'inline-block', 'verticalAlign': 'top'})
+                dcc.Textarea(
+                    id='ai-input',
+                    placeholder='Ask a question...',
+                    style={'width': '100%', 'height': '50px', 'borderRadius': '4px', 'borderColor': '#CCC', 'padding': '6px', 'fontSize': '11px', 'boxSizing': 'border-box'}
+                ),
+
+                html.Div([
+                    html.Button("🚀 Ask AI", id='ask-ai-btn', n_clicks=0,
+                                style={'padding': '4px 8px', 'backgroundColor': '#8B7E6F', 'color': 'white', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'marginRight': '6px', 'fontSize': '11px'}),
+                    html.Button("⚖️ Smart Compare", id='compare-ai-btn', n_clicks=0,
+                                style={'padding': '4px 8px', 'backgroundColor': '#7E8B9E', 'color': 'white', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'fontSize': '11px'}),
+                ], style={'marginTop': '6px'}),
+
+                dcc.Loading(
+                    type="circle",
+                    children=html.Div(id='ai-output', style={
+                        'marginTop': '8px', 'padding': '8px', 'backgroundColor': '#F9F8F3',
+                        'borderRadius': '4px', 'fontSize': '11px', 'lineHeight': '1.4', 'maxHeight': '150px', 'overflowY': 'auto'
+                    }, children="Select nodes to compare or ask AI.")
+                ),
+                dcc.Store(id='selected-nodes-store', data=[])
+            ]),
+
+            # 7. 节点具体信息悬浮/固定窗
+            html.Div(id='info-panel', style={**CARD_STYLE, 'flex': '1', 'overflowY': 'auto', 'minHeight': '200px'})
+        ]),
+
+        # ==========================================
+        # CENTER COLUMN: 3. 主视图1 & 主视图2 (切换展示)
+        # ==========================================
+        html.Div(style={'position': 'relative', 'backgroundColor': '#FFFFFF', 'borderRadius': '8px', 'border': '1px solid #E5E0D8', 'padding': '10px'}, children=[
+            dcc.Graph(id='main-plot', config={'displayModeBar': False}, style={'height': '68vh', 'width': '100%'}),
+
+            # 浮动作者控制选项
+            html.Div(
+                id='author-size-container',
+                children=[
+                    html.Span("NODE SIZE METRIC", style={'fontSize': '9px', 'fontWeight': '700', 'color': '#8C8275', 'marginBottom': '4px', 'display': 'block'}),
+                    dcc.RadioItems(
+                        id='author-size-metric',
+                        options=[{'label': ' Total Cites', 'value': 'total'}, {'label': ' Avg Cites', 'value': 'avg'}],
+                        value='total',
+                        labelStyle={'display': 'inline-block', 'marginRight': '8px', 'fontSize': '11px'}
+                    )
+                ],
+                style={'position': 'absolute', 'bottom': '20px', 'left': '20px', 'zIndex': '10', 'backgroundColor': 'rgba(255,255,255,0.9)', 'padding': '6px 12px', 'borderRadius': '6px', 'border': '1px solid #CCC', 'display': 'none'}
+            )
+        ]),
+
+        # ==========================================
+        # RIGHT COLUMN: 4. 三类统计图表 (点击展开 / 三选二展示)
+        # ==========================================
+        html.Div(style={'display': 'flex', 'flexDirection': 'column', 'gap': '10px'}, children=[
+            
+            # Chart Group 1: Bibliometric Overview
+            html.Details([
+                html.Summary("📊 Bibliometric Overview", style={'fontWeight': 'bold', 'cursor': 'pointer', 'padding': '8px', 'backgroundColor': '#EFECE6', 'borderRadius': '4px', 'fontSize': '13px'}),
+                html.Div([
+                    html.Img(id='wordcloud-img', style={'width': '100%', 'height': 'auto', 'borderRadius': '4px'}),
+                    dcc.Graph(id='concept-bar-plot', config={'displayModeBar': False}, style={'height': '180px'}),
+                    dcc.Graph(id='evolution-river-graph', config={'displayModeBar': False}, style={'height': '200px'})
+                ], style={'padding': '8px'})
+            ], open=True, style=CARD_STYLE),
+
+            # Chart Group 2: Research Scenario
+            html.Details([
+                html.Summary("📈 Research Scenario", style={'fontWeight': 'bold', 'cursor': 'pointer', 'padding': '8px', 'backgroundColor': '#EFECE6', 'borderRadius': '4px', 'fontSize': '13px'}),
+                html.Div([
+                    dcc.Graph(id='citation-histogram-graph', config={'displayModeBar': False}, style={'height': '220px'})
+                ], style={'padding': '8px'})
+            ], open=True, style=CARD_STYLE),
+
+            # Chart Group 3: Modeling Strategy
+            html.Details([
+                html.Summary("⚙️ Modeling Strategy", style={'fontWeight': 'bold', 'cursor': 'pointer', 'padding': '8px', 'backgroundColor': '#EFECE6', 'borderRadius': '4px', 'fontSize': '13px'}),
+                html.Div([
+                    dcc.Graph(id='stacked-trend-graph', config={'displayModeBar': False}, style={'height': '220px'})
+                ], style={'padding': '8px'})
+            ], open=False, style=CARD_STYLE)
+        ]),
+
+        # ==========================================
+        # BOTTOM ROW: 6. 引文主路径分析 & 5. 第一单位分布地图
+        # ==========================================
+        html.Div(style={'gridColumn': '1 / 3', **CARD_STYLE}, children=[
+            html.H4("🛣️ 6. 引文主路径分析 (Main Path Analysis)", style={'margin': '0 0 8px 0', 'fontSize': '13px', 'color': '#4A453F'}),
+            html.Div("Main Path Analysis Timeline Visualization", style={'height': '180px', 'backgroundColor': '#FAF8F5', 'border': '1px dashed #CCC', 'borderRadius': '4px', 'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center', 'color': '#888', 'fontSize': '12px'})
+        ]),
+
+        html.Div(style={'gridColumn': '3 / 4', **CARD_STYLE}, children=[
+            html.H4("🌍 5. 第一单位分布地图 (Geospatial Distribution)", style={'margin': '0 0 8px 0', 'fontSize': '13px', 'color': '#4A453F'}),
+            html.Iframe(id='geo-3d-map-iframe', style={'width': '100%', 'height': '180px', 'border': 'none', 'borderRadius': '4px'})
         ])
-    ], style={
-        'background': '#F2F0E4', 
-        'padding': '20px', 'borderRadius': '10px',
-        'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
-    }),
 
-    # Domain Knowledge Evolution River
-    html.Div([
-        html.H3("🌊 Domain Knowledge Evolution River",
-                style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
-        dcc.Graph(id='evolution-river-graph', config={'displayModeBar': False}, style={'height': '450px'})
-    ], style={
-        'background': '#F2F0E4', 
-        'padding': '20px', 'borderRadius': '10px',
-        'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
-    }),
-
-    # Citation Histogram Graph
-    html.Div([
-        html.H3("📊 Citation & Publication Metrics Histogram",
-                style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
-        dcc.Graph(id='citation-histogram-graph', config={'displayModeBar': False}, style={'height': '400px'})
-    ], style={
-        'background': '#F2F0E4', 
-        'padding': '20px', 'borderRadius': '10px',
-        'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
-    }),
-
-    # Stacked Trend Graph
-    html.Div([
-        html.H3("📈 Multi-Dimensional Categorical Trend (Stacked 100%)",
-                style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '15px', 'textAlign': 'center'}),
-        dcc.Graph(id='stacked-trend-graph', config={'displayModeBar': False})
-    ], style={
-        'background': '#F2F0E4', 
-        'padding': '20px', 'borderRadius': '10px',
-        'boxShadow': '0 2px 10px rgba(0,0,0,0.05)', 'marginTop': '20px'
-    }),
-    
-    # 3D Map Section
-    html.Div([
-        html.H3("🌍 Global Geospatial 3D Distribution", 
-                style={'color': '#4A453F', 'fontSize': '16px', 'marginBottom': '10px', 'fontWeight': 'bold'}),
-        
-        html.Iframe(
-            id='geo-3d-map-iframe',
-            style={
-                'width': '100%', 
-                'height': '400px', 
-                'border': 'none', 
-                'borderRadius': '8px'
-            }
-        )
-    ], style={
-        'backgroundColor': '#F2F0E4',
-        'padding': '15px',
-        'borderRadius': '10px',
-        'boxShadow': '0 2px 10px rgba(0,0,0,0.05)',
-        'marginTop': '20px',
-        'marginBottom': '20px'
-    })
+    ])
 ])
 
 # --- 3. Interaction Callback Logic ---
@@ -488,10 +446,7 @@ app.layout = html.Div(style={'backgroundColor': '#F2F0E4', 'minHeight': '100vh',
      Input('scale-factor-slider', 'value'),
      Input('author-size-metric', 'value')] 
 )
-
 def update_network(view_mode, years, search_txt, base_size, scale_factor, author_size_metric):
-    
-    # 1. 确定基础数据源
     if view_mode == 'paper':
         df = nodes_df
         edges_pool_to_use = edges_pool
@@ -501,15 +456,12 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor, author
         edges_pool_to_use = edges_author
         label_col = 'name'
 
-    # 2. 筛选出当前年份范围内的节点（只保留过滤这一步，避免逻辑重复）
     filtered_nodes = df[(df['publication_year'] >= years[0]) & (df['publication_year'] <= years[1])].copy()
     node_ids = set(filtered_nodes.index)
 
-    # 如果筛选后没有任何节点，直接防错处理
     if filtered_nodes.empty:
         return go.Figure()
 
-    # 3. 动态计算节点大小（作者视图可按总引用或平均引用，论文视图按总引用）
     cites_col = 'cited_by_count'
     if view_mode == 'author' and author_size_metric == 'avg':
         cites_col = 'avg_cites'
@@ -518,30 +470,16 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor, author
     max_sqrt = sqrt_cites.max() if sqrt_cites.max() > 0 else 1.0
     filtered_nodes['node_s'] = base_size + (sqrt_cites / max_sqrt) * scale_factor
 
-    # 4. 确定节点的颜色体系与自定义数据
     if view_mode == 'paper':
-        # 论文视图：按所属 Cluster 显示颜色
         node_colors = [COLOR_PALETTE[int(c) % 8] for c in filtered_nodes['cluster']]
-        
-        custom_data_arr = np.stack((
-            filtered_nodes['abstract'], 
-            filtered_nodes.index, 
-            [''] * len(filtered_nodes)
-        ), axis=-1)
+        custom_data_arr = np.stack((filtered_nodes['abstract'], filtered_nodes.index, [''] * len(filtered_nodes)), axis=-1)
     else:
-        # 💡 作者视图：根据刚才算出的 dominant_cluster 从 COLOR_PALETTE 获取对应 Topic 的颜色
         node_colors = [COLOR_PALETTE[int(c) % 8] for c in filtered_nodes['cluster']]
-        
-        custom_data_arr = np.stack((
-            filtered_nodes['note'], 
-            filtered_nodes.index, 
-            filtered_nodes['cluster_counts']
-        ), axis=-1)
+        custom_data_arr = np.stack((filtered_nodes['note'], filtered_nodes.index, filtered_nodes['cluster_counts']), axis=-1)
 
-    # 5. 计算边 bundling（仅对过滤后的节点连线）
     current_edges = []
     for edge in edges_pool_to_use:
-        u, v = edge[0], edge[1]  # 只取前两个作为节点 ID
+        u, v = edge[0], edge[1]
         if u in node_ids and v in node_ids:
             current_edges.append((u, v))
 
@@ -553,7 +491,6 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor, author
         edge_x = hb_paths['x'].tolist()
         edge_y = hb_paths['y'].tolist()
 
-    # 6. 计算搜索高亮红框
     marker_line_widths = [0] * len(filtered_nodes)
     if search_txt and len(search_txt) > 1:
         highlight_mask = filtered_nodes[label_col].str.contains(search_txt, case=False, na=False)
@@ -566,17 +503,16 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor, author
         fig.add_shape(type="circle", xref="x", yref="y", x0=-r_val, y0=-r_val, x1=r_val, y1=r_val,
                       line=dict(color="#D6DADB", width=1, dash="dot"))
 
-    fig.add_trace(go.Scatter(x=edge_x, y=edge_y, line=dict(width=0.6, color='#4A453F'),
-                             hoverinfo='none', mode='lines', opacity=0.2))
+    fig.add_trace(go.Scatter(x=edge_x, y=edge_y, line=dict(width=0.6, color='#4A453F'), hoverinfo='none', mode='lines', opacity=0.2))
 
     fig.add_trace(go.Scatter(
         x=filtered_nodes['x'], y=filtered_nodes['y'],
         mode='markers',
         text=filtered_nodes[label_col],
-        customdata=custom_data_arr,  # 【修复 2】：统一为 custom_data_arr
+        customdata=custom_data_arr,
         marker=dict(
             size=filtered_nodes['node_s'],
-            color=node_colors,       # 【修复 3】：统一为 node_colors
+            color=node_colors,
             line=dict(width=marker_line_widths, color='red'),
             opacity=0.8
         ),
@@ -586,10 +522,9 @@ def update_network(view_mode, years, search_txt, base_size, scale_factor, author
     fig.update_layout(
         showlegend=False, clickmode='event',
         margin=dict(t=0, b=0, l=0, r=0),
-        paper_bgcolor='#F2F0E4', plot_bgcolor='#F2F0E4',
+        paper_bgcolor='#FFFFFF', plot_bgcolor='#FFFFFF',
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.2, 1.2], fixedrange=False),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.2, 1.2],
-                   scaleanchor="x", scaleratio=1, fixedrange=False)
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-1.2, 1.2], scaleanchor="x", scaleratio=1, fixedrange=False)
     )
     return fig
 
@@ -602,41 +537,36 @@ def update_search_placeholder(view_mode):
         return 'Filter by author name...'
     return 'Search title, abstract keywords...'
 
-
 @app.callback(
-    [Output('info-panel', 'children'), Output('info-panel', 'style')],
+    Output('info-panel', 'children'),
     [Input('main-plot', 'clickData')],
     [State('view-mode', 'value')],
     prevent_initial_call=False
 )
 def handle_click(clickData, view_mode):
     if not clickData or 'points' not in clickData or 'customdata' not in clickData['points'][0]:
-        return "", {'display': 'none'}
+        return html.Div("💡 Click on any node to view detailed metrics and information.", style={'color': '#888', 'fontSize': '11px', 'fontStyle': 'italic'})
 
     point = clickData['points'][0]
     title = point.get('text', 'Unknown')
     custom_data = point.get('customdata', [])
     
     info = custom_data[0] if len(custom_data) > 0 else ""
-    cluster_counts_str = custom_data[2] if len(custom_data) > 2 else "" # 获取主题分布字符串
+    cluster_counts_str = custom_data[2] if len(custom_data) > 2 else ""
 
     if view_mode == 'author':
-        # 安全按行拆分，防止因行数不够导致的 IndexError 崩溃
         lines = info.split('\n') if info else []
-        
         line_0 = lines[0] if len(lines) > 0 else ""
         line_1 = lines[1] if len(lines) > 1 else ""
         line_2 = lines[2] if len(lines) > 2 else ""
         line_3 = lines[3] if len(lines) > 3 else ""
         
-        # 构建主题分布饼图
         pie_graph = html.Div()
         if cluster_counts_str:
             try:
                 counts = json.loads(cluster_counts_str)
                 labels = [f"Topic {k}" for k in counts.keys()]
                 values = list(counts.values())
-                # 饼图颜色保持与论文相同配色的映射
                 pie_colors = [COLOR_PALETTE[int(k) % 8] for k in counts.keys()]
                 
                 pie_fig = go.Figure(data=[go.Pie(
@@ -645,57 +575,39 @@ def handle_click(clickData, view_mode):
                     textinfo='percent', hoverinfo='label+value'
                 )])
                 pie_fig.update_layout(
-                    margin=dict(t=20, b=0, l=0, r=0), height=180,
+                    margin=dict(t=10, b=0, l=0, r=0), height=140,
                     showlegend=True,
                     legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.0),
-                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                    title=dict(text="Research Topics Ratio", font=dict(size=12))
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
                 )
                 pie_graph = dcc.Graph(figure=pie_fig, config={'displayModeBar': False})
             except Exception:
                 pie_graph = html.Div()
 
         panel_content = html.Div([
-            html.H3(f"👤 {title}", style={'color': '#4A453F', 'fontSize': '18px', 'borderBottom': '2px solid #C2B49B', 'paddingBottom': '10px', 'marginTop': '5px'}),
-            
-            # 插入动态生成的饼图
+            html.H4(f"👤 {title}", style={'color': '#4A453F', 'fontSize': '14px', 'margin': '0 0 6px 0'}),
             pie_graph,
-            
             html.Div([
-                html.P(line_0, style={'margin': '6px 0', 'fontSize': '13px'}),
-                html.P(line_1, style={'margin': '6px 0', 'fontSize': '13px'}),
-                html.P(line_2, style={'margin': '6px 0', 'color': '#666', 'fontSize': '13px'}),
-            ], style={'backgroundColor': '#F9F8F3', 'padding': '10px', 'borderRadius': '6px', 'marginBottom': '12px'}),
-
-            html.Strong("🎓 Selected Works:", style={'fontSize': '13px', 'color': '#4A453F'}),
-            html.P(line_3.replace("Selected Publications: ", ""), style={'fontSize': '12px', 'lineHeight': '1.6', 'color': '#555', 'marginTop': '6px', 'textAlign': 'justify'}),
-            html.Hr(style={'borderColor': '#eee', 'margin': '15px 0'}),
-            html.Em("Tip: Click blank area in graph to close this panel.", style={'fontSize': '11px', 'color': '#999'})
+                html.P(line_0, style={'margin': '3px 0', 'fontSize': '11px'}),
+                html.P(line_1, style={'margin': '3px 0', 'fontSize': '11px'}),
+                html.P(line_2, style={'margin': '3px 0', 'color': '#666', 'fontSize': '11px'}),
+            ], style={'backgroundColor': '#F9F8F3', 'padding': '6px', 'borderRadius': '4px'}),
+            html.Strong("🎓 Selected Works:", style={'fontSize': '11px', 'color': '#4A453F', 'marginTop': '6px', 'display': 'block'}),
+            html.P(line_3.replace("Selected Publications: ", ""), style={'fontSize': '10px', 'lineHeight': '1.4', 'color': '#555', 'marginTop': '4px'})
         ])
 
     else:
-        # 论文模式（Paper View）的展示逻辑
         paper_id = custom_data[1] if len(custom_data) > 1 else 'N/A'
         abstract = info if info else "No abstract available."
 
         panel_content = html.Div([
-            html.H3(f"📄 {title}", style={'color': '#4A453F', 'fontSize': '16px', 'borderBottom': '2px solid #C2B49B', 'paddingBottom': '10px', 'marginTop': '5px'}),
-            html.P(f"Paper ID: {paper_id}", style={'margin': '6px 0', 'fontSize': '12px', 'color': '#7F8C8D'}),
-            html.Hr(style={'borderColor': '#eee', 'margin': '10px 0'}),
-            html.Strong("Abstract:", style={'fontSize': '13px', 'color': '#4A453F'}),
-            html.P(abstract, style={'fontSize': '12px', 'lineHeight': '1.6', 'color': '#555', 'marginTop': '6px', 'textAlign': 'justify', 'maxHeight': '250px', 'overflowY': 'auto'}),
-            html.Hr(style={'borderColor': '#eee', 'margin': '15px 0'}),
-            html.Em("Tip: Click blank area in graph to close this panel.", style={'fontSize': '11px', 'color': '#999'})
+            html.H4(f"📄 {title}", style={'color': '#4A453F', 'fontSize': '13px', 'margin': '0 0 6px 0'}),
+            html.P(f"ID: {paper_id}", style={'margin': '2px 0', 'fontSize': '10px', 'color': '#7F8C8D'}),
+            html.Strong("Abstract:", style={'fontSize': '11px', 'color': '#4A453F', 'marginTop': '6px', 'display': 'block'}),
+            html.P(abstract, style={'fontSize': '10px', 'lineHeight': '1.4', 'color': '#555', 'marginTop': '4px'})
         ])
 
-    panel_style = {
-        'position': 'absolute', 'top': '20px', 'right': '20px', 'width': '340px',
-        'backgroundColor': 'rgba(255, 255, 255, 0.98)', 'padding': '20px',
-        'borderRadius': '12px', 'boxShadow': '0 8px 30px rgba(0,0,0,0.18)',
-        'display': 'block', 'maxHeight': '80vh', 'overflowY': 'auto',
-        'border': '1px solid #8B7E6F', 'zIndex': '1000'
-    }
-    return panel_content, panel_style
+    return panel_content
 
 @app.callback(
     [Output('selected-nodes-store', 'data'),
@@ -710,24 +622,19 @@ def manage_selected_nodes(clickData, clear_clicks, current_selected, view_mode):
         current_selected = []
 
     if ctx.triggered_id == 'clear-selection-btn':
-        return [], html.Span("💡 Click graph nodes to add to comparison", style={'color': '#999', 'fontSize': '12px'})
+        return [], html.Span("💡 Click graph nodes to compare", style={'color': '#999', 'fontSize': '11px'})
 
     if ctx.triggered_id != 'main-plot' or not clickData:
         if not current_selected:
-            return [], html.Span("💡 Click graph nodes to add to comparison", style={'color': '#999', 'fontSize': '12px'})
+            return [], html.Span("💡 Click graph nodes to compare", style={'color': '#999', 'fontSize': '11px'})
 
-        tags = []
-        for n in current_selected:
-            icon = "📄" if n.get('type') == 'paper' else "👤"
-            color = '#B4C4D5' if n.get('type') == 'paper' else '#C2B49B'
-            tags.append(html.Span(f"{icon} {n['name'][:10]}...", title=n['name'],
-                                  style={'display': 'inline-block', 'margin': '2px', 'padding': '4px 8px', 'backgroundColor': color, 'borderRadius': '4px', 'fontSize': '12px', 'color': '#4A453F'}))
+        tags = [html.Span(f"{'📄' if n.get('type')=='paper' else '👤'} {n['name'][:8]}...", title=n['name'],
+                          style={'display': 'inline-block', 'margin': '2px', 'padding': '2px 6px', 'backgroundColor': '#E0DCD3', 'borderRadius': '3px', 'fontSize': '10px'}) for n in current_selected]
         return current_selected, tags
 
     try:
         point = clickData['points'][0]
         node_name = point.get('text', 'Unknown')
-
         custom_data_list = point.get('customdata', [None, None])
         node_info = custom_data_list[0]
         node_id = str(custom_data_list[1])
@@ -739,26 +646,15 @@ def manage_selected_nodes(clickData, clear_clicks, current_selected, view_mode):
             'info': node_info if node_info else "No abstract information available"
         }
 
-        if any(str(n['id']) == node_id for n in current_selected):
-            new_selected = current_selected
-        else:
-            new_selected = current_selected + [node_meta]
-            if len(new_selected) > 2:
-                new_selected = new_selected[1:]
+        if not any(str(n['id']) == node_id for n in current_selected):
+            current_selected = (current_selected + [node_meta])[-2:]
 
-        tags = []
-        for n in new_selected:
-            icon = "📄" if n['type'] == 'paper' else "👤"
-            color = '#B4C4D5' if n['type'] == 'paper' else '#C2B49B'
-            tags.append(html.Span(f"{icon} {n['name'][:10]}...", title=n['name'],
-                                  style={'display': 'inline-block', 'margin': '2px', 'padding': '4px 8px', 'backgroundColor': color, 'borderRadius': '4px', 'fontSize': '12px', 'color': '#4A453F', 'fontWeight': 'bold'}))
+        tags = [html.Span(f"{'📄' if n['type']=='paper' else '👤'} {n['name'][:8]}...", title=n['name'],
+                          style={'display': 'inline-block', 'margin': '2px', 'padding': '2px 6px', 'backgroundColor': '#C2B49B', 'borderRadius': '3px', 'fontSize': '10px', 'fontWeight': 'bold'}) for n in current_selected]
 
-        return new_selected, tags
-
+        return current_selected, tags
     except Exception as e:
-        print(f"Error parsing node: {str(e)}")
         return current_selected, []
-
 
 @app.callback(
     Output('ai-output', 'children'),
@@ -769,24 +665,22 @@ def manage_selected_nodes(clickData, clear_clicks, current_selected, view_mode):
 )
 def handle_ai_query(ask_clicks, compare_clicks, selected_nodes, user_question):
     if not ctx.triggered:
-        return "No interaction data. Please click to select papers or authors in the graph."
+        return "Select papers/authors to interact."
 
     trigger_id = ctx.triggered_id
 
     if not selected_nodes:
-        return "❌ Please click to select at least one paper or author in the graph!"
+        return "❌ Select at least one object."
 
     if trigger_id == 'compare-ai-btn':
         if len(selected_nodes) < 2:
-            return "❌ Comparison mode requires selecting 2 objects (two papers or two authors). Please click to select a second object and try again."
-
+            return "❌ Requires 2 objects."
         return llm_helper.handle_ai_compare(selected_nodes[0], selected_nodes[1])
 
     elif trigger_id == 'ask-ai-btn':
         return llm_helper.handle_ai_question(selected_nodes, user_question)
 
     return "Awaiting command..."
-
 
 @app.callback(
     [Output('wordcloud-img', 'src'),
@@ -799,53 +693,12 @@ def update_wordcloud(years, view_mode):
     img_src, bar_fig = get_wordcloud_and_bar_assets(df_filtered, target_col='concepts')
     return img_src, bar_fig
 
-
-clientside_callback(
-    """
-    function(id) {
-        setTimeout(function() {
-            var panel = document.getElementById('ai-panel');
-            var header = document.getElementById('ai-panel-header');
-            if (panel && header && !panel.dataset.dragInited) {
-                panel.dataset.dragInited = "true";
-                var pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
-                header.onmousedown = function(e) {
-                    e = e || window.event;
-                    e.preventDefault();
-                    pos3 = e.clientX;
-                    pos4 = e.clientY;
-                    document.onmouseup = function() {
-                        document.onmouseup = null;
-                        document.onmousemove = null;
-                    };
-                    document.onmousemove = function(e) {
-                        e = e || window.event;
-                        e.preventDefault();
-                        pos1 = pos3 - e.clientX;
-                        pos2 = pos4 - e.clientY;
-                        pos3 = e.clientX;
-                        pos4 = e.clientY;
-                        panel.style.top = (panel.offsetTop - pos2) + "px";
-                        panel.style.left = (panel.offsetLeft - pos1) + "px";
-                    };
-                };
-            }
-        }, 300);
-        return "";
-    }
-    """,
-    Output('ai-panel-header', 'title'),
-    Input('ai-panel', 'id')
-)
-
-
 @app.callback(
     Output('evolution-river-graph', 'figure'),
     [Input('year-slider', 'value')]
 )
 def update_evolution_river(years):
     return evolution_river.generate_evolution_river(meta_df, nodes_df, year_range=years)
-
 
 @app.callback(
     Output('citation-histogram-graph', 'figure'),
@@ -860,54 +713,23 @@ def update_citation_histogram(years, view_mode):
     [Input('year-slider', 'value')]
 )
 def update_stacked_trend(years):
-
-    fig = stacked_trend.generate_stacked_trend_figure(
-        stacked_data_df,
-        year_range=years
-    )
-
-    return fig
-
+    return stacked_trend.generate_stacked_trend_figure(stacked_data_df, year_range=years)
 
 @app.callback(
     Output('geo-3d-map-iframe', 'srcDoc'), 
     [Input('year-slider', 'value')]
 )
 def update_geo_3d_map(years):
-    
-    return geo_map_3d.generate_3d_column_map_html(
-        stacked_data_df, 
-        year_range=years, 
-        gps_col='first_affil_city_gps'
-    )
+    return geo_map_3d.generate_3d_column_map_html(stacked_data_df, year_range=years, gps_col='first_affil_city_gps')
 
 @app.callback(
     Output('author-size-container', 'style'),
     Input('view-mode', 'value')
 )
 def toggle_author_size_control(view_mode):
-    # 基础悬浮样式
-    base_style = {
-        'position': 'absolute',
-        'top': '101px',
-        'right': '160px',          
-        'zIndex': '2000',            
-        'backgroundColor': 'rgba(255, 255, 255, 0.92)', 
-        'backdropFilter': 'blur(8px)',                  
-        'padding': '10px 14px',
-        'borderRadius': '8px',
-        'border': '1px solid #8B7E6F',
-        'boxShadow': '0 4px 15px rgba(0, 0, 0, 0.1)',
-        'transition': 'all 0.3s ease'
-    }
-    
-    if view_mode == 'author':
-        base_style['display'] = 'block'   # 🌟 作者模式：显示悬浮面板
-    else:
-        base_style['display'] = 'none'    # 🌟 论文模式：隐藏面板
-        
-    return base_style
-
+    style = {'position': 'absolute', 'bottom': '20px', 'left': '20px', 'zIndex': '10', 'backgroundColor': 'rgba(255,255,255,0.9)', 'padding': '6px 12px', 'borderRadius': '6px', 'border': '1px solid #CCC'}
+    style['display'] = 'block' if view_mode == 'author' else 'none'
+    return style
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8051, debug=False)
